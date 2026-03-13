@@ -141,7 +141,7 @@ def _register_ib_health_handlers(ib, ib_health):
             if farm_name not in ib_health.market_data_down_farms:
                 log_warning(
                     logger,
-                    f"Market data farm недоступен: code={error_code}, farm={farm_name}, message={error_string}",
+                    f"Market data farm недоступен: code={error_code}, farm={farm_name}, message={error_string}", to_telegram=False
                 )
 
             ib_health.market_data_down_farms.add(farm_name)
@@ -167,7 +167,7 @@ def _register_ib_health_handlers(ib, ib_health):
             if farm_name not in ib_health.hmds_down_farms:
                 log_warning(
                     logger,
-                    f"HMDS недоступен: code={error_code}, farm={farm_name}, message={error_string}",
+                    f"HMDS недоступен: code={error_code}, farm={farm_name}, message={error_string}", to_telegram=False
                 )
 
             ib_health.hmds_down_farms.add(farm_name)
@@ -405,10 +405,10 @@ async def heartbeat_ib_connection(ib, ib_health):
         # - нет проблемных market data farm,
         # - нет проблемных HMDS farm.
         if (
-            server_time_ok
-            and ib_health.ib_backend_ok
-            and ib_health.market_data_ok
-            and ib_health.hmds_ok
+                server_time_ok
+                and ib_health.ib_backend_ok
+                and ib_health.market_data_ok
+                and ib_health.hmds_ok
         ):
             log_info(
                 logger,
