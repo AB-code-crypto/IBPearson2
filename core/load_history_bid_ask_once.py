@@ -380,6 +380,9 @@ async def load_history_task(ib, settings):
     # Для индекса используем whatToShow из contracts.py.
     log_info(logger, "Запускаю задачу первичной загрузки истории", to_telegram=True)
 
+    current_server_time = await ib.reqCurrentTimeAsync()
+    current_server_ts = int(current_server_time.astimezone(timezone.utc).timestamp())
+
     total_rows_written = 0
 
     for instrument_code, instrument_row in Instrument.items():
@@ -417,8 +420,18 @@ async def load_history_task(ib, settings):
                     contract_row=contract_row,
                 )
 
+                # Если контракт ещё не начал быть активным, в будущее не лезем.
+                if contract_row["active_from_ts_utc"] >= current_server_ts:
+                    log_info(
+                        logger,
+                        f"Пропускаю будущий контракт {contract.localSymbol}, "
+                        f"active_from={contract_row['active_from_utc']}",
+                        to_telegram=False,
+                    )
+                    continue
+
                 start_ts = contract_row["active_from_ts_utc"]
-                end_ts = contract_row["active_to_ts_utc"]
+                end_ts = min(contract_row["active_to_ts_utc"], current_server_ts)
 
                 if last_bar_time_ts is not None:
                     start_ts = max(start_ts, last_bar_time_ts)
@@ -426,7 +439,7 @@ async def load_history_task(ib, settings):
                 if start_ts >= end_ts:
                     log_info(
                         logger,
-                        f"Пропускаю контракт {contract.localSymbol}, история уже есть",
+                        f"Пропускаю контракт {contract.localSymbol}, история уже есть или контракт ещё не актуален",
                         to_telegram=False,
                     )
                     continue
@@ -475,9 +488,7 @@ async def load_history_task(ib, settings):
         )
 
         start_ts = instrument_row["active_from_ts_utc"]
-
-        server_time = await ib.reqCurrentTimeAsync()
-        end_ts = int(server_time.astimezone(timezone.utc).timestamp())
+        end_ts = current_server_ts
 
         if last_bar_time_ts is not None:
             start_ts = max(start_ts, last_bar_time_ts)
