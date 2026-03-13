@@ -4,11 +4,13 @@ from dataclasses import dataclass
 @dataclass
 class Settings:
     ib_host: str = "127.0.0.1"
-    ib_port: int = 7497
+    ib_port: int = 7496
     ib_client_id: int = 100
 
-    # Файл SQLite БД со свечками
-    history_db_path: str = "data/history.sqlite3"
+    # Файл SQLite БД
+    price_db_path: str = "data/price.sqlite3"
+    trade_db_path: str = "data/trade.sqlite3"
+    pearson_cash_db_path: str = "data/pearson_cash.sqlite3"
 
     # ==============================
     # Telegram bot / channels

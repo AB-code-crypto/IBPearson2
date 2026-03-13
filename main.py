@@ -9,6 +9,7 @@ from core.ib_connector import (
     monitor_ib_connection,
     get_ib_server_time_text,
 )
+from core.load_history_bid_ask_once import load_history_task
 from core.logger import (
     setup_logging,
     setup_telegram_logging,
@@ -36,6 +37,7 @@ async def main():
     # Фоновые задачи.
     monitor_task = None
     heartbeat_task = None
+    history_task = None
 
     # Текст итогового сообщения при остановке.
     shutdown_message = "Робот завершает работу"
@@ -56,8 +58,14 @@ async def main():
         # Запускаем heartbeat-задачу.
         heartbeat_task = asyncio.create_task(heartbeat_ib_connection(ib, ib_health))
 
-        # Пока других сервисов у нас ещё нет,
-        # просто держим main() живым бесконечно.
+        # Запускаем задачу первичной загрузки истории.
+        history_task = asyncio.create_task(load_history_task(ib, settings))
+
+        # Ждём завершения загрузки истории.
+        # Если таска упадёт, main тоже упадёт громко.
+        await history_task
+
+        # После завершения истории робот продолжает жить дальше.
         await asyncio.Event().wait()
 
     except asyncio.CancelledError:
@@ -66,6 +74,15 @@ async def main():
         raise
 
     finally:
+        # Если история ещё не завершилась — отменяем.
+        if history_task is not None and not history_task.done():
+            history_task.cancel()
+
+            try:
+                await history_task
+            except asyncio.CancelledError:
+                pass
+
         # Останавливаем heartbeat.
         if heartbeat_task is not None:
             heartbeat_task.cancel()
@@ -97,8 +114,6 @@ async def main():
         await wait_telegram_logging()
 
         # Явно отправляем финальное сообщение в Telegram.
-        # Это не logger-обёртка, а прямой awaited-вызов, поэтому
-        # он корректно отработает до закрытия HTTP-сессии.
         await telegram_sender.send_text(f"{shutdown_message}. Соединение с IB закрыто")
 
         # И только после этого закрываем HTTP-сессию Telegram.
