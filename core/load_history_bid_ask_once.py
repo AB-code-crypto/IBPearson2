@@ -17,6 +17,11 @@ from core.logger import get_logger, log_info
 logger = get_logger(__name__)
 
 
+# Пауза после каждого historical request.
+# Это даёт спокойный темп и помогает не упираться в pacing limits IB.
+HISTORICAL_REQUEST_DELAY_SECONDS = 11
+
+
 def format_utc(dt, for_ib=False):
     # Один форматтер:
     # - для записи времени в БД
@@ -295,6 +300,9 @@ async def load_history_bid_ask_once(
         keepUpToDate=False,
     )
 
+    # Пауза после первого historical request.
+    await asyncio.sleep(HISTORICAL_REQUEST_DELAY_SECONDS)
+
     ask_bars = await ib.reqHistoricalDataAsync(
         contract,
         endDateTime=format_utc(end_dt, for_ib=True),
@@ -305,6 +313,9 @@ async def load_history_bid_ask_once(
         formatDate=2,
         keepUpToDate=False,
     )
+
+    # Пауза после второго historical request.
+    await asyncio.sleep(HISTORICAL_REQUEST_DELAY_SECONDS)
 
     rows = build_quote_rows(
         bid_bars=bid_bars,
@@ -344,6 +355,9 @@ async def load_history_single_stream_once(
         formatDate=2,
         keepUpToDate=False,
     )
+
+    # Пауза после historical request.
+    await asyncio.sleep(HISTORICAL_REQUEST_DELAY_SECONDS)
 
     rows = build_ohlc_rows(
         bars=bars,
