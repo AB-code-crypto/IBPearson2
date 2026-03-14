@@ -9,7 +9,7 @@ from core.ib_connector import (
     monitor_ib_connection,
     get_ib_server_time_text,
 )
-from core.load_history_bid_ask_once import load_history_task
+from core.load_history import load_history_task
 from core.logger import (
     setup_logging,
     setup_telegram_logging,

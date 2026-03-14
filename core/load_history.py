@@ -11,15 +11,16 @@ from core.db_sql import (
     get_create_ohlc_table_sql,
     get_upsert_ohlc_sql,
 )
-from core.logger import get_logger, log_info
-
+from core.logger import get_logger, log_info, log_warning
 
 logger = get_logger(__name__)
-
 
 # Пауза после каждого historical request.
 # Это даёт спокойный темп и помогает не упираться в pacing limits IB.
 HISTORICAL_REQUEST_DELAY_SECONDS = 11
+
+# Пауза ожидания, пока monitor_task восстановит соединение с IB.
+RECONNECT_WAIT_SECONDS = 1
 
 
 def format_utc(dt, for_ib=False):
@@ -277,41 +278,122 @@ def get_last_bar_time_ts(db_path, table_name):
         conn.close()
 
 
+async def wait_for_ib_connection(ib):
+    # Ждём, пока monitor_task восстановит соединение с IB.
+    wait_logged = False
+
+    while not ib.isConnected():
+        if not wait_logged:
+            log_warning(
+                logger,
+                "Загрузка истории ждёт восстановления соединения с IB...",
+                to_telegram=False,
+            )
+            wait_logged = True
+
+        await asyncio.sleep(RECONNECT_WAIT_SECONDS)
+
+    if wait_logged:
+        log_info(
+            logger,
+            "Соединение с IB восстановлено, загрузка истории продолжается",
+            to_telegram=False,
+        )
+
+
+async def request_historical_data_with_reconnect(
+        ib,
+        contract,
+        end_dt,
+        start_dt,
+        bar_size_setting,
+        what_to_show,
+        use_rth,
+):
+    # Historical request, который умеет ждать реконнект и повторять запрос.
+    while True:
+        await wait_for_ib_connection(ib)
+
+        try:
+            bars = await ib.reqHistoricalDataAsync(
+                contract,
+                endDateTime=format_utc(end_dt, for_ib=True),
+                durationStr=build_duration_str(start_dt, end_dt),
+                barSizeSetting=bar_size_setting,
+                whatToShow=what_to_show,
+                useRTH=use_rth,
+                formatDate=2,
+                keepUpToDate=False,
+            )
+
+            return bars
+
+        except asyncio.CancelledError:
+            raise
+
+        except ConnectionError:
+            log_warning(
+                logger,
+                f"Потеря соединения во время historical request {what_to_show}, "
+                f"жду реконнект и повторяю запрос",
+                to_telegram=False,
+            )
+            await asyncio.sleep(RECONNECT_WAIT_SECONDS)
+
+
+async def request_current_time_with_reconnect(ib):
+    # Запрос времени сервера с ожиданием реконнекта.
+    while True:
+        await wait_for_ib_connection(ib)
+
+        try:
+            return await ib.reqCurrentTimeAsync()
+
+        except asyncio.CancelledError:
+            raise
+
+        except ConnectionError:
+            log_warning(
+                logger,
+                "Потеря соединения во время запроса server time, жду реконнект и повторяю запрос",
+                to_telegram=False,
+            )
+            await asyncio.sleep(RECONNECT_WAIT_SECONDS)
+
+
 async def load_history_bid_ask_once(
-    ib,
-    contract,
-    db_path,
-    table_name,
-    start_dt,
-    end_dt,
-    bar_size_setting,
-    use_rth,
+        ib,
+        contract,
+        db_path,
+        table_name,
+        start_dt,
+        end_dt,
+        bar_size_setting,
+        use_rth,
 ):
     # Простая разовая загрузка BID и ASK истории,
     # склейка в памяти и запись в БД.
-    bid_bars = await ib.reqHistoricalDataAsync(
-        contract,
-        endDateTime=format_utc(end_dt, for_ib=True),
-        durationStr=build_duration_str(start_dt, end_dt),
-        barSizeSetting=bar_size_setting,
-        whatToShow="BID",
-        useRTH=use_rth,
-        formatDate=2,
-        keepUpToDate=False,
+    bid_bars = await request_historical_data_with_reconnect(
+        ib=ib,
+        contract=contract,
+        end_dt=end_dt,
+        start_dt=start_dt,
+        bar_size_setting=bar_size_setting,
+        what_to_show="BID",
+        use_rth=use_rth,
     )
 
     # Пауза после первого historical request.
     await asyncio.sleep(HISTORICAL_REQUEST_DELAY_SECONDS)
 
-    ask_bars = await ib.reqHistoricalDataAsync(
-        contract,
-        endDateTime=format_utc(end_dt, for_ib=True),
-        durationStr=build_duration_str(start_dt, end_dt),
-        barSizeSetting=bar_size_setting,
-        whatToShow="ASK",
-        useRTH=use_rth,
-        formatDate=2,
-        keepUpToDate=False,
+    ask_bars = await request_historical_data_with_reconnect(
+        ib=ib,
+        contract=contract,
+        end_dt=end_dt,
+        start_dt=start_dt,
+        bar_size_setting=bar_size_setting,
+        what_to_show="ASK",
+        use_rth=use_rth,
     )
 
     # Пауза после второго historical request.
@@ -334,26 +416,25 @@ async def load_history_bid_ask_once(
 
 
 async def load_history_single_stream_once(
-    ib,
-    contract,
-    db_path,
-    table_name,
-    start_dt,
-    end_dt,
-    bar_size_setting,
-    what_to_show,
-    use_rth,
-    contract_name,
-):
-    bars = await ib.reqHistoricalDataAsync(
+        ib,
         contract,
-        endDateTime=format_utc(end_dt, for_ib=True),
-        durationStr=build_duration_str(start_dt, end_dt),
-        barSizeSetting=bar_size_setting,
-        whatToShow=what_to_show,
-        useRTH=use_rth,
-        formatDate=2,
-        keepUpToDate=False,
+        db_path,
+        table_name,
+        start_dt,
+        end_dt,
+        bar_size_setting,
+        what_to_show,
+        use_rth,
+        contract_name,
+):
+    bars = await request_historical_data_with_reconnect(
+        ib=ib,
+        contract=contract,
+        end_dt=end_dt,
+        start_dt=start_dt,
+        bar_size_setting=bar_size_setting,
+        what_to_show=what_to_show,
+        use_rth=use_rth,
     )
 
     # Пауза после historical request.
@@ -438,9 +519,9 @@ async def load_history_task(ib, settings):
                 )
 
                 for chunk_start_ts, chunk_end_ts in iter_chunks(
-                    start_ts,
-                    end_ts,
-                    chunk_seconds,
+                        start_ts,
+                        end_ts,
+                        chunk_seconds,
                 ):
                     chunk_start_dt = datetime.fromtimestamp(chunk_start_ts, tz=timezone.utc)
                     chunk_end_dt = datetime.fromtimestamp(chunk_end_ts, tz=timezone.utc)
@@ -476,7 +557,7 @@ async def load_history_task(ib, settings):
 
         start_ts = instrument_row["active_from_ts_utc"]
 
-        server_time = await ib.reqCurrentTimeAsync()
+        server_time = await request_current_time_with_reconnect(ib)
         end_ts = int(server_time.astimezone(timezone.utc).timestamp())
 
         if last_bar_time_ts is not None:
@@ -497,9 +578,9 @@ async def load_history_task(ib, settings):
         )
 
         for chunk_start_ts, chunk_end_ts in iter_chunks(
-            start_ts,
-            end_ts,
-            chunk_seconds,
+                start_ts,
+                end_ts,
+                chunk_seconds,
         ):
             chunk_start_dt = datetime.fromtimestamp(chunk_start_ts, tz=timezone.utc)
             chunk_end_dt = datetime.fromtimestamp(chunk_end_ts, tz=timezone.utc)
