@@ -1,4 +1,5 @@
 import asyncio
+import math
 import sqlite3
 from datetime import datetime, timezone
 
@@ -46,6 +47,14 @@ HISTORICAL_REQUEST_TIMEOUT_SECONDS = 90
 
 # Как часто проверяем, поднялось ли соединение после обрыва.
 RECONNECT_WAIT_SECONDS = 1
+
+# Как часто проверяем, восстановились ли backend IB и HMDS.
+#
+# Это отдельная проверка от локального API-соединения.
+# Смысл в том, что TWS / Gateway могут быть подключены локально,
+# но backend IB или HMDS уже в нештатном состоянии,
+# и тогда historical request иногда возвращает битые данные.
+IB_HEALTH_WAIT_SECONDS = 1
 
 # Размер куска для 5-секундной истории фьючерсов.
 # Пользователь явно зафиксировал, что для фьючерсов качаем по одному часу.
@@ -202,6 +211,54 @@ def iter_chunks(start_ts, end_ts, chunk_seconds):
         current_end_ts = min(current_start_ts + chunk_seconds, end_ts)
         yield current_start_ts, current_end_ts
         current_start_ts = current_end_ts
+
+
+def validate_price_value(value, field_name, stream_name, contract_name, interval_text, bar_index):
+    # Главная функция валидации цены.
+    #
+    # Проверяет одно конкретное значение, например BID open или ASK high.
+    # Если цена корректна, возвращает None.
+    # Если цена плохая, возвращает готовое описание для лога.
+    #
+    # Некорректными считаем:
+    # - None;
+    # - bool;
+    # - нечисловые значения;
+    # - NaN / inf;
+    # - 0 и отрицательные цены.
+    if value is None:
+        return (
+            f"Некорректная цена в {stream_name} для {contract_name}, "
+            f"interval={interval_text}, bar_index={bar_index}, field={field_name}, value={value}"
+        )
+
+    if isinstance(value, bool):
+        return (
+            f"Некорректная цена в {stream_name} для {contract_name}, "
+            f"interval={interval_text}, bar_index={bar_index}, field={field_name}, value={value}"
+        )
+
+    if not isinstance(value, (int, float)):
+        return (
+            f"Некорректная цена в {stream_name} для {contract_name}, "
+            f"interval={interval_text}, bar_index={bar_index}, field={field_name}, value={value}"
+        )
+
+    numeric_value = float(value)
+
+    if not math.isfinite(numeric_value):
+        return (
+            f"Некорректная цена в {stream_name} для {contract_name}, "
+            f"interval={interval_text}, bar_index={bar_index}, field={field_name}, value={value}"
+        )
+
+    if numeric_value <= 0:
+        return (
+            f"Некорректная цена в {stream_name} для {contract_name}, "
+            f"interval={interval_text}, bar_index={bar_index}, field={field_name}, value={value}"
+        )
+
+    return None
 
 
 def build_quote_rows(bid_bars, ask_bars, contract_name):
@@ -535,6 +592,38 @@ async def wait_for_ib_connection(ib):
         )
 
 
+async def wait_for_ib_history_ready(ib, ib_health):
+    # Ждём не только локального API-соединения, но и нормального состояния
+    # backend IB / HMDS.
+    #
+    # Это закрывает ситуацию, когда локальный сокет до TWS ещё жив,
+    # но backend IB уже не в порядке и historical request может вернуть
+    # частично пустые или битые цены.
+    wait_logged = False
+
+    while True:
+        await wait_for_ib_connection(ib)
+
+        if ib_health.ib_backend_ok and ib_health.hmds_ok:
+            if wait_logged:
+                log_info(
+                    logger,
+                    "Backend IB и HMDS снова доступны, загрузка истории продолжается",
+                    to_telegram=False,
+                )
+            return
+
+        if not wait_logged:
+            log_warning(
+                logger,
+                "Загрузка истории ждёт восстановления backend IB / HMDS...",
+                to_telegram=False,
+            )
+            wait_logged = True
+
+        await asyncio.sleep(IB_HEALTH_WAIT_SECONDS)
+
+
 def is_connection_problem(exc):
     # Определяем, похожа ли ошибка на проблему соединения.
     #
@@ -568,22 +657,24 @@ def is_connection_problem(exc):
 
 
 async def request_historical_data_with_reconnect(
-    ib,
-    contract,
-    end_dt,
-    start_dt,
-    bar_size_setting,
-    what_to_show,
-    use_rth,
+        ib,
+        ib_health,
+        contract,
+        end_dt,
+        start_dt,
+        bar_size_setting,
+        what_to_show,
+        use_rth,
 ):
     # Устойчивая обёртка над reqHistoricalDataAsync.
     #
     # Поведение такое:
     # - если локального соединения нет — ждём реконнект;
+    # - если backend IB / HMDS не в порядке — тоже ждём;
     # - если запрос оборвался из-за соединения — не падаем, а повторяем;
     # - если ошибка не похожа на сетевую/соединенческую — пробрасываем её наружу.
     while True:
-        await wait_for_ib_connection(ib)
+        await wait_for_ib_history_ready(ib, ib_health)
 
         try:
             return await asyncio.wait_for(
@@ -646,106 +737,280 @@ async def request_current_time_with_reconnect(ib):
 
 
 async def load_history_bid_ask_once(
-    ib,
-    contract,
-    db_path,
-    table_name,
-    start_dt,
-    end_dt,
-    bar_size_setting,
-    use_rth,
-):
-    # Атомарная загрузка одного временного куска BID + ASK.
-    bid_bars = await request_historical_data_with_reconnect(
-        ib=ib,
-        contract=contract,
-        end_dt=end_dt,
-        start_dt=start_dt,
-        bar_size_setting=bar_size_setting,
-        what_to_show="BID",
-        use_rth=use_rth,
-    )
-
-    await asyncio.sleep(HISTORICAL_REQUEST_DELAY_SECONDS)
-
-    ask_bars = await request_historical_data_with_reconnect(
-        ib=ib,
-        contract=contract,
-        end_dt=end_dt,
-        start_dt=start_dt,
-        bar_size_setting=bar_size_setting,
-        what_to_show="ASK",
-        use_rth=use_rth,
-    )
-
-    await asyncio.sleep(HISTORICAL_REQUEST_DELAY_SECONDS)
-
-    rows = build_quote_rows(
-        bid_bars=bid_bars,
-        ask_bars=ask_bars,
-        contract_name=contract.localSymbol,
-    )
-
-    await asyncio.to_thread(
-        write_quote_rows_to_sqlite,
+        ib,
+        ib_health,
+        contract,
         db_path,
         table_name,
-        rows,
-    )
+        start_dt,
+        end_dt,
+        bar_size_setting,
+        use_rth,
+):
+    # Атомарная загрузка одного временного куска BID + ASK.
+    #
+    # Если historical request вернул битые цены, этот же chunk повторяем заново.
+    while True:
+        bid_bars = await request_historical_data_with_reconnect(
+            ib=ib,
+            ib_health=ib_health,
+            contract=contract,
+            end_dt=end_dt,
+            start_dt=start_dt,
+            bar_size_setting=bar_size_setting,
+            what_to_show="BID",
+            use_rth=use_rth,
+        )
 
-    return len(rows)
+        await asyncio.sleep(HISTORICAL_REQUEST_DELAY_SECONDS)
+
+        ask_bars = await request_historical_data_with_reconnect(
+            ib=ib,
+            ib_health=ib_health,
+            contract=contract,
+            end_dt=end_dt,
+            start_dt=start_dt,
+            bar_size_setting=bar_size_setting,
+            what_to_show="ASK",
+            use_rth=use_rth,
+        )
+
+        await asyncio.sleep(HISTORICAL_REQUEST_DELAY_SECONDS)
+
+        interval_text = f"{format_utc(start_dt)} -> {format_utc(end_dt)}"
+        validation_error = None
+
+        for index, bar in enumerate(bid_bars):
+            validation_error = validate_price_value(
+                value=bar.open,
+                field_name="open",
+                stream_name="BID",
+                contract_name=contract.localSymbol,
+                interval_text=interval_text,
+                bar_index=index,
+            )
+            if validation_error is not None:
+                break
+
+            validation_error = validate_price_value(
+                value=bar.high,
+                field_name="high",
+                stream_name="BID",
+                contract_name=contract.localSymbol,
+                interval_text=interval_text,
+                bar_index=index,
+            )
+            if validation_error is not None:
+                break
+
+            validation_error = validate_price_value(
+                value=bar.low,
+                field_name="low",
+                stream_name="BID",
+                contract_name=contract.localSymbol,
+                interval_text=interval_text,
+                bar_index=index,
+            )
+            if validation_error is not None:
+                break
+
+            validation_error = validate_price_value(
+                value=bar.close,
+                field_name="close",
+                stream_name="BID",
+                contract_name=contract.localSymbol,
+                interval_text=interval_text,
+                bar_index=index,
+            )
+            if validation_error is not None:
+                break
+
+        if validation_error is None:
+            for index, bar in enumerate(ask_bars):
+                validation_error = validate_price_value(
+                    value=bar.open,
+                    field_name="open",
+                    stream_name="ASK",
+                    contract_name=contract.localSymbol,
+                    interval_text=interval_text,
+                    bar_index=index,
+                )
+                if validation_error is not None:
+                    break
+
+                validation_error = validate_price_value(
+                    value=bar.high,
+                    field_name="high",
+                    stream_name="ASK",
+                    contract_name=contract.localSymbol,
+                    interval_text=interval_text,
+                    bar_index=index,
+                )
+                if validation_error is not None:
+                    break
+
+                validation_error = validate_price_value(
+                    value=bar.low,
+                    field_name="low",
+                    stream_name="ASK",
+                    contract_name=contract.localSymbol,
+                    interval_text=interval_text,
+                    bar_index=index,
+                )
+                if validation_error is not None:
+                    break
+
+                validation_error = validate_price_value(
+                    value=bar.close,
+                    field_name="close",
+                    stream_name="ASK",
+                    contract_name=contract.localSymbol,
+                    interval_text=interval_text,
+                    bar_index=index,
+                )
+                if validation_error is not None:
+                    break
+
+        if validation_error is not None:
+            log_warning(
+                logger,
+                f"Фьючерс {contract.localSymbol}: historical request вернул некорректные BID/ASK цены. "
+                f"{validation_error}. Повторяю этот же chunk",
+                to_telegram=False,
+            )
+            await asyncio.sleep(RECONNECT_WAIT_SECONDS)
+            continue
+
+        rows = build_quote_rows(
+            bid_bars=bid_bars,
+            ask_bars=ask_bars,
+            contract_name=contract.localSymbol,
+        )
+
+        await asyncio.to_thread(
+            write_quote_rows_to_sqlite,
+            db_path,
+            table_name,
+            rows,
+        )
+
+        return len(rows)
 
 
 async def load_history_single_stream_once(
-    ib,
-    contract,
-    db_path,
-    table_name,
-    start_dt,
-    end_dt,
-    bar_size_setting,
-    what_to_show,
-    use_rth,
-    contract_name,
-):
-    # Атомарная загрузка одного временного куска одиночного потока OHLC.
-    bars = await request_historical_data_with_reconnect(
-        ib=ib,
-        contract=contract,
-        end_dt=end_dt,
-        start_dt=start_dt,
-        bar_size_setting=bar_size_setting,
-        what_to_show=what_to_show,
-        use_rth=use_rth,
-    )
-
-    await asyncio.sleep(HISTORICAL_REQUEST_DELAY_SECONDS)
-
-    rows = build_ohlc_rows(
-        bars=bars,
-        contract_name=contract_name,
-    )
-
-    await asyncio.to_thread(
-        write_ohlc_rows_to_sqlite,
+        ib,
+        ib_health,
+        contract,
         db_path,
         table_name,
-        rows,
-    )
+        start_dt,
+        end_dt,
+        bar_size_setting,
+        what_to_show,
+        use_rth,
+        contract_name,
+):
+    # Атомарная загрузка одного временного куска одиночного потока OHLC.
+    #
+    # Если IB вернул битые цены, повторяем этот же chunk заново.
+    while True:
+        bars = await request_historical_data_with_reconnect(
+            ib=ib,
+            ib_health=ib_health,
+            contract=contract,
+            end_dt=end_dt,
+            start_dt=start_dt,
+            bar_size_setting=bar_size_setting,
+            what_to_show=what_to_show,
+            use_rth=use_rth,
+        )
 
-    return len(rows)
+        await asyncio.sleep(HISTORICAL_REQUEST_DELAY_SECONDS)
+
+        interval_text = f"{format_utc(start_dt)} -> {format_utc(end_dt)}"
+        validation_error = None
+
+        for index, bar in enumerate(bars):
+            validation_error = validate_price_value(
+                value=bar.open,
+                field_name="open",
+                stream_name=what_to_show,
+                contract_name=contract_name,
+                interval_text=interval_text,
+                bar_index=index,
+            )
+            if validation_error is not None:
+                break
+
+            validation_error = validate_price_value(
+                value=bar.high,
+                field_name="high",
+                stream_name=what_to_show,
+                contract_name=contract_name,
+                interval_text=interval_text,
+                bar_index=index,
+            )
+            if validation_error is not None:
+                break
+
+            validation_error = validate_price_value(
+                value=bar.low,
+                field_name="low",
+                stream_name=what_to_show,
+                contract_name=contract_name,
+                interval_text=interval_text,
+                bar_index=index,
+            )
+            if validation_error is not None:
+                break
+
+            validation_error = validate_price_value(
+                value=bar.close,
+                field_name="close",
+                stream_name=what_to_show,
+                contract_name=contract_name,
+                interval_text=interval_text,
+                bar_index=index,
+            )
+            if validation_error is not None:
+                break
+
+        if validation_error is not None:
+            log_warning(
+                logger,
+                f"Инструмент {contract_name}: historical request вернул некорректные цены {what_to_show}. "
+                f"{validation_error}. Повторяю этот же chunk",
+                to_telegram=False,
+            )
+            await asyncio.sleep(RECONNECT_WAIT_SECONDS)
+            continue
+
+        rows = build_ohlc_rows(
+            bars=bars,
+            contract_name=contract_name,
+        )
+
+        await asyncio.to_thread(
+            write_ohlc_rows_to_sqlite,
+            db_path,
+            table_name,
+            rows,
+        )
+
+        return len(rows)
 
 
 async def load_quotes_segment(
-    ib,
-    db_path,
-    table_name,
-    contract,
-    bar_size_setting,
-    use_rth,
-    segment_start_ts,
-    segment_end_ts,
-    segment_kind,
+        ib,
+        ib_health,
+        db_path,
+        table_name,
+        contract,
+        bar_size_setting,
+        use_rth,
+        segment_start_ts,
+        segment_end_ts,
+        segment_kind,
 ):
     # Качаем один недостающий сегмент фьючерсной истории.
     #
@@ -772,6 +1037,7 @@ async def load_quotes_segment(
 
         rows_written = await load_history_bid_ask_once(
             ib=ib,
+            ib_health=ib_health,
             contract=contract,
             db_path=db_path,
             table_name=table_name,
@@ -794,17 +1060,18 @@ async def load_quotes_segment(
 
 
 async def load_single_stream_segment(
-    ib,
-    db_path,
-    table_name,
-    contract,
-    contract_name,
-    bar_size_setting,
-    what_to_show,
-    use_rth,
-    segment_start_ts,
-    segment_end_ts,
-    segment_kind,
+        ib,
+        ib_health,
+        db_path,
+        table_name,
+        contract,
+        contract_name,
+        bar_size_setting,
+        what_to_show,
+        use_rth,
+        segment_start_ts,
+        segment_end_ts,
+        segment_kind,
 ):
     # Качаем один недостающий сегмент индекса / одиночного потока.
     if segment_end_ts <= segment_start_ts:
@@ -826,6 +1093,7 @@ async def load_single_stream_segment(
 
         rows_written = await load_history_single_stream_once(
             ib=ib,
+            ib_health=ib_health,
             contract=contract,
             db_path=db_path,
             table_name=table_name,
@@ -858,13 +1126,14 @@ def get_current_aligned_ts(server_dt, bar_size_seconds):
 
 
 async def process_futures_contract(
-    ib,
-    settings,
-    instrument_code,
-    instrument_row,
-    contract_row,
-    table_name,
-    current_aligned_ts,
+        ib,
+        ib_health,
+        settings,
+        instrument_code,
+        instrument_row,
+        contract_row,
+        table_name,
+        current_aligned_ts,
 ):
     # Полная обработка одного фьючерсного контракта:
     # - использовать уже полученное и выровненное server time IB;
@@ -974,6 +1243,7 @@ async def process_futures_contract(
     for segment in coverage["segments"]:
         total_rows_written += await load_quotes_segment(
             ib=ib,
+            ib_health=ib_health,
             db_path=settings.price_db_path,
             table_name=table_name,
             contract=contract,
@@ -1008,7 +1278,7 @@ async def process_futures_contract(
     return total_rows_written, True
 
 
-async def process_index_instrument(ib, settings, instrument_code, instrument_row, table_name):
+async def process_index_instrument(ib, ib_health, settings, instrument_code, instrument_row, table_name):
     # Обработка индекса / одиночного потока по той же идее,
     # только без списка contracts.
     contract = build_index_contract(
@@ -1099,6 +1369,7 @@ async def process_index_instrument(ib, settings, instrument_code, instrument_row
     for segment in coverage["segments"]:
         total_rows_written += await load_single_stream_segment(
             ib=ib,
+            ib_health=ib_health,
             db_path=settings.price_db_path,
             table_name=table_name,
             contract=contract,
@@ -1134,7 +1405,7 @@ async def process_index_instrument(ib, settings, instrument_code, instrument_row
     return total_rows_written
 
 
-async def load_history_task(ib, settings):
+async def load_history_task(ib, ib_health, settings):
     # Главная таска загрузки истории.
     #
     # Новая логика работы:
@@ -1196,6 +1467,7 @@ async def load_history_task(ib, settings):
             for contract_row in instrument_row["contracts"]:
                 rows_written, was_loaded = await process_futures_contract(
                     ib=ib,
+                    ib_health=ib_health,
                     settings=settings,
                     instrument_code=instrument_code,
                     instrument_row=instrument_row,
@@ -1239,6 +1511,7 @@ async def load_history_task(ib, settings):
 
             total_rows_written += await process_index_instrument(
                 ib=ib,
+                ib_health=ib_health,
                 settings=settings,
                 instrument_code=instrument_code,
                 instrument_row=instrument_row,

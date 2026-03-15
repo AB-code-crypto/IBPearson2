@@ -59,7 +59,8 @@ async def main():
         heartbeat_task = asyncio.create_task(heartbeat_ib_connection(ib, ib_health))
 
         # Запускаем задачу первичной загрузки истории.
-        history_task = asyncio.create_task(load_history_task(ib, settings))
+        # history_task = asyncio.create_task(load_history_task(ib, settings))
+        history_task = asyncio.create_task(load_history_task(ib, ib_health, settings))
 
         # Ждём завершения загрузки истории.
         # Если таска упадёт, main тоже упадёт громко.
