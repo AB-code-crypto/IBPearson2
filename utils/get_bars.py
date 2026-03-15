@@ -22,7 +22,7 @@ START_DT_UTC = datetime(2026, 3, 11, 9, 24, 0, tzinfo=timezone.utc)
 DURATION = timedelta(minutes=20)
 
 BAR_SIZE = "5 secs"
-WHAT_TO_SHOW = "TRADES"
+WHAT_TO_SHOW = "MIDPOINT"
 USE_RTH = False
 
 
