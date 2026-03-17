@@ -67,18 +67,18 @@ async def main():
         heartbeat_task = asyncio.create_task(heartbeat_ib_connection(ib, ib_health))
 
         # Запускаем задачу первичной загрузки истории.
-        # history_task = asyncio.create_task(load_history_task(ib, settings))
-        # history_task = asyncio.create_task(load_history_task(ib, ib_health, settings))
+        history_task = asyncio.create_task(load_history_task(ib, settings))
+        history_task = asyncio.create_task(load_history_task(ib, ib_health, settings))
 
         # Ждём завершения загрузки истории.
         # Если таска упадёт, main тоже упадёт громко.
-        # await history_task
+        await history_task
 
         # Потом переходим на реальные котировки
-        realtime_task = asyncio.create_task(load_realtime_task(ib, ib_health, settings))
+        # realtime_task = asyncio.create_task(load_realtime_task(ib, ib_health, settings))
 
         # И дальше уже держим процесс живым
-        await realtime_task
+        # await realtime_task
 
         # После завершения истории робот продолжает жить дальше.
         await asyncio.Event().wait()
