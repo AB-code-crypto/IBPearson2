@@ -14,7 +14,7 @@ IB_PORT = 7497
 IB_CLIENT_ID = 91
 
 # Что ищем
-LOCAL_SYMBOL = "NQZ6"
+LOCAL_SYMBOL = "MNQM4"
 SEC_TYPE = "FUT"
 
 # Для старых / истекших фьючерсов должно быть True
