@@ -10,8 +10,8 @@ from ib_async import IB, Contract
 # =========================
 
 IB_HOST = "127.0.0.1"
-IB_PORT = 7497
-IB_CLIENT_ID = 91
+IB_PORT = 7496
+IB_CLIENT_ID = 55
 
 # Что ищем
 LOCAL_SYMBOL = "MNQM4"
