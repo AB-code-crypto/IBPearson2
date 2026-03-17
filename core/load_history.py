@@ -233,9 +233,9 @@ def should_load_futures_hour_chunk(chunk_start_ts, chunk_end_ts):
     # Для safety-логики функция рассчитана именно на часовые chunk-и.
     # Если когда-нибудь сюда начнут передавать другой размер,
     # лучше упасть сразу и явно.
-    if int((chunk_end_dt - chunk_start_dt).total_seconds()) != 3600:
+    if int((chunk_end_dt - chunk_start_dt).total_seconds()) > 3600:
         raise ValueError(
-            "Функция should_load_futures_hour_chunk рассчитана только на часовые интервалы"
+            f"Функция should_load_futures_hour_chunk рассчитана только на часовые интервалы. Получен интервал: {chunk_start_dt}-{chunk_end_dt}"
         )
 
     start_weekday = chunk_start_dt.weekday()
