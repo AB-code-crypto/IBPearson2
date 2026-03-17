@@ -4,7 +4,7 @@ from dataclasses import dataclass
 @dataclass
 class Settings:
     ib_host: str = "127.0.0.1"
-    ib_port: int = 7496
+    ib_port: int = 7497         #7497 - демо счёт 7496 - реальный счёт
     ib_client_id: int = 100
 
     # Файл SQLite БД

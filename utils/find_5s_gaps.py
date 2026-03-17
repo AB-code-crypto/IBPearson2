@@ -2,7 +2,6 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 # ============================================================================
 # НАСТРОЙКИ СКРИПТА
 # ============================================================================
@@ -11,7 +10,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # База данных, в которой ищем дыры.
-DB_PATH = PROJECT_ROOT / "data" / "price_old.sqlite3"
+DB_PATH = PROJECT_ROOT / "data" / "price.sqlite3"
 
 # Таблица, в которой ищем дыры.
 TABLE_NAME = "MNQ_5s"
@@ -27,11 +26,11 @@ TABLE_NAME = "MNQ_5s"
 # - "YYYY-MM-DD HH:MM:SS"
 # - "YYYY-MM-DDTHH:MM:SSZ"
 
-# SEARCH_FROM_UTC = None
-# SEARCH_TO_UTC = None
+SEARCH_FROM_UTC = None
+SEARCH_TO_UTC = None
+# SEARCH_FROM_UTC = "2024-12-31 21:00:00"
+# SEARCH_TO_UTC = "2026-03-16 11:00:00"
 
-SEARCH_FROM_UTC = "2025-09-07 21:00:00"
-SEARCH_TO_UTC = "2025-09-17 23:40:00"
 # Для 5-секундных данных ожидаем строго такой шаг между соседними свечами.
 EXPECTED_STEP_SECONDS = 5
 
@@ -43,7 +42,6 @@ def format_utc_ts(timestamp_utc):
     # Преобразуем unix timestamp в читаемую строку UTC.
     dt = datetime.fromtimestamp(timestamp_utc, tz=timezone.utc)
     return dt.strftime("%Y-%m-%d %H:%M:%S")
-
 
 
 def parse_utc_to_ts(value):
@@ -83,7 +81,6 @@ def parse_utc_to_ts(value):
     return int(dt.timestamp())
 
 
-
 def validate_search_bounds(search_from_ts, search_to_ts):
     # Проверяем корректность переданных границ поиска.
     if search_from_ts is None and search_to_ts is None:
@@ -99,7 +96,6 @@ def validate_search_bounds(search_from_ts, search_to_ts):
         raise ValueError("SEARCH_FROM_UTC не может быть больше SEARCH_TO_UTC")
 
 
-
 def ensure_table_exists(conn, table_name):
     # Проверяем, что нужная таблица существует в базе.
     sql = "SELECT name FROM sqlite_master WHERE type='table' AND name = ?"
@@ -107,7 +103,6 @@ def ensure_table_exists(conn, table_name):
 
     if row is None:
         raise ValueError(f"Таблица '{table_name}' не найдена в базе {DB_PATH}")
-
 
 
 def fetch_history_bounds(conn, table_name):
@@ -118,7 +113,6 @@ def fetch_history_bounds(conn, table_name):
     min_ts = row[0]
     max_ts = row[1]
     return min_ts, max_ts
-
 
 
 def build_rows_query(table_name, search_from_ts, search_to_ts):
@@ -135,7 +129,6 @@ def build_rows_query(table_name, search_from_ts, search_to_ts):
         f"ORDER BY bar_time_ts ASC"
     )
     return sql, (search_from_ts, search_to_ts)
-
 
 
 def print_gap(gap_number, gap_start_ts, gap_end_ts, reason):
@@ -250,7 +243,6 @@ def find_gaps_in_rows(sorted_timestamps, search_from_ts, search_to_ts):
         )
 
     return gap_count
-
 
 
 def main():
