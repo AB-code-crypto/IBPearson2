@@ -1,6 +1,7 @@
 import asyncio
 
 from config import settings_live as settings
+from core.load_realtime import load_realtime_task
 from core.telegram_sender import TelegramSender
 from core.ib_connector import (
     connect_ib,
@@ -10,6 +11,7 @@ from core.ib_connector import (
     get_ib_server_time_text,
 )
 from core.load_history import load_history_task
+from core.db_initializer import initialize_databases
 from core.logger import (
     setup_logging,
     setup_telegram_logging,
@@ -52,6 +54,12 @@ async def main():
         server_time_text = await get_ib_server_time_text(ib)
         log_info(logger, f"Время сервера IB: {server_time_text}")
 
+        # До запуска фоновых задач создаём нужные БД и таблицы.
+        #
+        # Если структура хранилищ ещё не подготовлена, историческому загрузчику и
+        # прочим задачам дальше идти рано. Поэтому инициализацию делаем заранее.
+        await initialize_databases(settings)
+
         # Запускаем фоновую задачу мониторинга соединения.
         monitor_task = asyncio.create_task(monitor_ib_connection(ib, settings, ib_health))
 
@@ -60,11 +68,17 @@ async def main():
 
         # Запускаем задачу первичной загрузки истории.
         # history_task = asyncio.create_task(load_history_task(ib, settings))
-        history_task = asyncio.create_task(load_history_task(ib, ib_health, settings))
+        # history_task = asyncio.create_task(load_history_task(ib, ib_health, settings))
 
         # Ждём завершения загрузки истории.
         # Если таска упадёт, main тоже упадёт громко.
-        await history_task
+        # await history_task
+
+        # Потом переходим на реальные котировки
+        realtime_task = asyncio.create_task(load_realtime_task(ib, ib_health, settings))
+
+        # И дальше уже держим процесс живым
+        await realtime_task
 
         # После завершения истории робот продолжает жить дальше.
         await asyncio.Event().wait()

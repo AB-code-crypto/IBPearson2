@@ -213,6 +213,49 @@ def iter_chunks(start_ts, end_ts, chunk_seconds):
         current_start_ts = current_end_ts
 
 
+def should_load_futures_hour_chunk(chunk_start_ts, chunk_end_ts):
+    # Проверяем, попадает ли часовой chunk в гарантированное weekend-окно CME
+    # для MNQ/NQ в UTC.
+    #
+    # на летнее/зимнее время:
+    # - с пятницы 22:00 UTC
+    # - до воскресенья 22:00 UTC
+    #
+    # Если час целиком попадает в это окно, рынок гарантированно закрыт,
+    # и такой chunk можно не запрашивать.
+    #
+    # Функция возвращает:
+    # - True  -> chunk надо качать;
+    # - False -> chunk гарантированно попал на выходные, пропускаем.
+    chunk_start_dt = datetime.fromtimestamp(chunk_start_ts, tz=timezone.utc)
+    chunk_end_dt = datetime.fromtimestamp(chunk_end_ts, tz=timezone.utc)
+
+    # Для safety-логики функция рассчитана именно на часовые chunk-и.
+    # Если когда-нибудь сюда начнут передавать другой размер,
+    # лучше упасть сразу и явно.
+    if int((chunk_end_dt - chunk_start_dt).total_seconds()) != 3600:
+        raise ValueError(
+            "Функция should_load_futures_hour_chunk рассчитана только на часовые интервалы"
+        )
+
+    start_weekday = chunk_start_dt.weekday()
+    start_hour = chunk_start_dt.hour
+
+    # Пятница после 22:00 UTC и до конца суток — гарантированно выходные.
+    if start_weekday == 4 and start_hour >= 22:
+        return False
+
+    # Вся суббота целиком гарантированно попадает в weekend-окно.
+    if start_weekday == 5:
+        return False
+
+    # Воскресенье до 22:00 UTC не торгуется.
+    if start_weekday == 6 and start_hour < 22:
+        return False
+
+    return True
+
+
 def validate_price_value(value, field_name, stream_name, contract_name, interval_text, bar_index):
     # Главная функция валидации цены.
     #
@@ -406,35 +449,6 @@ def write_ohlc_rows_to_sqlite(db_path, table_name, rows):
         conn.executemany(upsert_sql, rows)
         conn.commit()
 
-    finally:
-        conn.close()
-
-
-def ensure_quotes_table_exists(db_path, table_name):
-    # Создаём таблицу котировок заранее, если её ещё нет.
-    # Это позволяет потом спокойно делать SELECT по ней.
-    create_sql = get_create_quotes_table_sql(table_name)
-
-    conn = sqlite3.connect(db_path)
-
-    try:
-        conn.execute("PRAGMA busy_timeout=5000;")
-        conn.execute(create_sql)
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def ensure_ohlc_table_exists(db_path, table_name):
-    # То же самое для одиночного OHLC-потока.
-    create_sql = get_create_ohlc_table_sql(table_name)
-
-    conn = sqlite3.connect(db_path)
-
-    try:
-        conn.execute("PRAGMA busy_timeout=5000;")
-        conn.execute(create_sql)
-        conn.commit()
     finally:
         conn.close()
 
@@ -1028,6 +1042,15 @@ async def load_quotes_segment(
         chunk_start_dt = datetime.fromtimestamp(chunk_start_ts, tz=timezone.utc)
         chunk_end_dt = datetime.fromtimestamp(chunk_end_ts, tz=timezone.utc)
 
+        if not should_load_futures_hour_chunk(chunk_start_ts, chunk_end_ts):
+            log_info(
+                logger,
+                f"Фьючерс {contract.localSymbol}: chunk {format_utc(chunk_start_dt)} -> "
+                f"{format_utc(chunk_end_dt)} гарантированно попал на выходные CME по UTC. Пропускаю.",
+                to_telegram=False,
+            )
+            continue
+
         log_info(
             logger,
             f"Фьючерс {contract.localSymbol}: запрашиваю {segment_kind}-chunk "
@@ -1408,7 +1431,6 @@ async def process_index_instrument(ib, ib_health, settings, instrument_code, ins
 async def load_history_task(ib, ib_health, settings):
     # Главная таска загрузки истории.
     #
-    # Новая логика работы:
     # 1. идём по реестру Instrument;
     # 2. для FUT обрабатываем каждый контракт отдельно;
     # 3. для каждого контракта смотрим покрытие истории именно по contract;
@@ -1434,14 +1456,6 @@ async def load_history_task(ib, ib_health, settings):
         )
 
         if instrument_row["secType"] == "FUT":
-            # Таблицу для фьючерсных котировок создаём заранее,
-            # чтобы селекты по контракту были предсказуемыми даже на пустой БД.
-            await asyncio.to_thread(
-                ensure_quotes_table_exists,
-                settings.price_db_path,
-                table_name,
-            )
-
             log_info(
                 logger,
                 f"Инструмент {instrument_code}: всего контрактов в списке {len(instrument_row['contracts'])}",
@@ -1502,13 +1516,6 @@ async def load_history_task(ib, ib_health, settings):
             continue
 
         if instrument_row["secType"] == "IND":
-            # Для индекса заранее создаём OHLC-таблицу.
-            await asyncio.to_thread(
-                ensure_ohlc_table_exists,
-                settings.price_db_path,
-                table_name,
-            )
-
             total_rows_written += await process_index_instrument(
                 ib=ib,
                 ib_health=ib_health,

@@ -15,7 +15,7 @@ FUT_DEFAULTS: InstrumentRow = {
     "exchange": "CME",
     "currency": "USD",
     "roll_days": 2,
-    "whatToShow": "MIDPOINT",
+    "whatToShow": "TRADES",
     "barSizeSetting": "5 secs",
     "useRTH": False,
     "minTick": Decimal("0.25"),
