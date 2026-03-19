@@ -27,6 +27,9 @@ def get_create_quotes_table_sql(table_name):
 
 def get_upsert_quotes_sql(table_name):
     # UPSERT для BID/ASK-таблицы.
+    #
+    # Этот вариант подходит, когда вся строка бара уже полностью собрана,
+    # например при исторической загрузке BID + ASK за один и тот же интервал.
     return f"""
     INSERT INTO {table_name} (
         bar_time_ts,
@@ -69,6 +72,60 @@ def get_upsert_quotes_sql(table_name):
         volume = excluded.volume,
         average = excluded.average,
         bar_count = excluded.bar_count
+    ;
+    """
+
+
+def get_upsert_quotes_ask_sql(table_name):
+    # UPSERT только для ASK-стороны realtime-бара.
+    #
+    # Обновляем только ask_* поля и не трогаем bid_*.
+    # Это важно, потому что BID и ASK в realtime приходят отдельными потоками,
+    # и более поздний UPSERT одной стороны не должен затирать другую сторону в NULL.
+    return f"""
+    INSERT INTO {table_name} (
+        bar_time_ts,
+        bar_time,
+        contract,
+        ask_open,
+        ask_high,
+        ask_low,
+        ask_close
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(bar_time_ts) DO UPDATE SET
+        bar_time = excluded.bar_time,
+        contract = excluded.contract,
+        ask_open = excluded.ask_open,
+        ask_high = excluded.ask_high,
+        ask_low = excluded.ask_low,
+        ask_close = excluded.ask_close
+    ;
+    """
+
+
+def get_upsert_quotes_bid_sql(table_name):
+    # UPSERT только для BID-стороны realtime-бара.
+    #
+    # Обновляем только bid_* поля и не трогаем ask_*.
+    return f"""
+    INSERT INTO {table_name} (
+        bar_time_ts,
+        bar_time,
+        contract,
+        bid_open,
+        bid_high,
+        bid_low,
+        bid_close
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(bar_time_ts) DO UPDATE SET
+        bar_time = excluded.bar_time,
+        contract = excluded.contract,
+        bid_open = excluded.bid_open,
+        bid_high = excluded.bid_high,
+        bid_low = excluded.bid_low,
+        bid_close = excluded.bid_close
     ;
     """
 

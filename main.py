@@ -74,10 +74,10 @@ async def main():
         await history_task
 
         # Потом переходим на реальные котировки
-        # realtime_task = asyncio.create_task(load_realtime_task(ib, ib_health, settings))
+        realtime_task = asyncio.create_task(load_realtime_task(ib, ib_health, settings))
 
         # И дальше уже держим процесс живым
-        # await realtime_task
+        await realtime_task
 
         # После завершения истории робот продолжает жить дальше.
         await asyncio.Event().wait()
