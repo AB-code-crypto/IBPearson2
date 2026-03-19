@@ -1,13 +1,9 @@
-import asyncio
 from datetime import datetime, timezone
 
 from contracts import Instrument
-from core.ib_connector import get_ib_server_time_text
-from core.logger import get_logger, log_warning, log_info
-
+from core.logger import get_logger, log_warning
 
 logger = get_logger(__name__)
-
 
 # Как часто обновляем словарь активных фьючерсов.
 ACTIVE_FUTURES_REFRESH_SECONDS = 3600
@@ -23,7 +19,6 @@ def parse_server_time_text(server_time_text):
     return dt
 
 
-
 def parse_contract_utc_text(utc_text):
     # Разбираем UTC-время контракта из contracts.py.
     #
@@ -32,7 +27,6 @@ def parse_contract_utc_text(utc_text):
     dt = datetime.strptime(utc_text, "%Y-%m-%dT%H:%M:%SZ")
     dt = dt.replace(tzinfo=timezone.utc)
     return dt
-
 
 
 def build_active_futures(server_time_text):
@@ -71,24 +65,3 @@ def build_active_futures(server_time_text):
         active_futures[instrument_code] = current_local_symbol
 
     return active_futures
-
-
-
-async def active_futures_hourly_task(ib, logger, update_callback):
-    # Раз в час обновляем словарь активных фьючерсов и отдаём его наружу через callback.
-    #
-    # Сам сервис ничего у себя не хранит. Он только получает server time,
-    # строит свежий словарь активных фьючерсов и передаёт его вызывающему коду.
-    while True:
-        server_time_text = await get_ib_server_time_text(ib)
-        active_futures = build_active_futures(server_time_text)
-
-        update_callback(active_futures)
-
-        log_info(
-            logger,
-            f"Активные фьючерсы обновлены: {active_futures}",
-            to_telegram=False,
-        )
-
-        await asyncio.sleep(ACTIVE_FUTURES_REFRESH_SECONDS)

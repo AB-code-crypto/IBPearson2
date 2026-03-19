@@ -1,7 +1,7 @@
 import asyncio
 
 from config import settings_live as settings
-from core.active_futures import build_active_futures, active_futures_hourly_task
+from core.active_futures import build_active_futures
 from core.load_realtime import load_realtime_task
 from core.telegram_sender import TelegramSender
 from core.ib_connector import (
@@ -32,21 +32,8 @@ logger = get_logger(__name__)
 telegram_sender = TelegramSender(settings)
 setup_telegram_logging(telegram_sender)
 
-# Глобальный словарь активных фьючерсов.
-# Сам сервис active_futures.py ничего внутри себя не хранит,
-# поэтому если результат нужно держать в памяти процесса,
-# делаем это уже здесь, на уровне main.
-ACTIVE_FUTURES = {}
-
-
-def set_active_futures(active_futures):
-    ACTIVE_FUTURES.clear()
-    ACTIVE_FUTURES.update(active_futures)
-
 
 async def main():
-    global ACTIVE_FUTURES
-
     # На старте ждём, пока соединение с IB будет установлено.
     ib, ib_health = await connect_ib(settings)
 
@@ -55,7 +42,6 @@ async def main():
     heartbeat_task = None
     history_task = None
     realtime_task = None
-    active_futures_task = None
 
     # Текст итогового сообщения при остановке.
     shutdown_message = "Робот завершает работу"
@@ -70,20 +56,17 @@ async def main():
         server_time_text = await get_ib_server_time_text(ib)
         log_info(logger, f"Время сервера IB: {server_time_text}")
 
+        # Один раз при старте определяем активные фьючерсы.
+        # Ролловер внутри процесса пока не автоматизируем:
+        # при смене квартального контракта робот будет перезапускаться вручную.
+        active_futures = build_active_futures(server_time_text)
+        log_info(logger, f"Активные фьючерсы на старте: {active_futures}", to_telegram=False)
+
         # До запуска фоновых задач создаём нужные БД и таблицы.
         #
         # Если структура хранилищ ещё не подготовлена, историческому загрузчику и
         # прочим задачам дальше идти рано. Поэтому инициализацию делаем заранее.
         await initialize_databases(settings)
-
-        # После инициализации БД один раз определяем активные фьючерсы
-        # по текущему server time IB.
-        ACTIVE_FUTURES = build_active_futures(server_time_text)
-        log_info(
-            logger,
-            f"Стартовый словарь активных фьючерсов: {ACTIVE_FUTURES}",
-            to_telegram=False,
-        )
 
         # Запускаем фоновую задачу мониторинга соединения.
         monitor_task = asyncio.create_task(monitor_ib_connection(ib, settings, ib_health))
@@ -98,21 +81,11 @@ async def main():
         # Если таска упадёт, main тоже упадёт громко.
         await history_task
 
-        # Запускаем почасовое обновление словаря активных фьючерсов.
-        active_futures_task = asyncio.create_task(
-            active_futures_hourly_task(
-                ib=ib,
-                logger=logger,
-                update_callback=set_active_futures,
-            )
-        )
-
         # Потом переходим на реальные котировки.
-        realtime_task = asyncio.create_task(load_realtime_task(ib, ib_health, settings))
+        realtime_task = asyncio.create_task(load_realtime_task(ib, ib_health, settings, active_futures))
 
-        # Держим процесс живым, пока работают realtime и hourly-обновление
-        # активных фьючерсов. Если упадёт любая из этих задач, main тоже упадёт.
-        await asyncio.gather(realtime_task, active_futures_task)
+        # И дальше уже держим процесс живым.
+        await realtime_task
 
         # После завершения истории робот продолжает жить дальше.
         await asyncio.Event().wait()
@@ -123,16 +96,7 @@ async def main():
         raise
 
     finally:
-        # Если история ещё не завершилась — отменяем.
-        if history_task is not None and not history_task.done():
-            history_task.cancel()
-
-            try:
-                await history_task
-            except asyncio.CancelledError:
-                pass
-
-        # Останавливаем realtime-задачу.
+        # Если realtime ещё не завершился — отменяем.
         if realtime_task is not None and not realtime_task.done():
             realtime_task.cancel()
 
@@ -141,12 +105,12 @@ async def main():
             except asyncio.CancelledError:
                 pass
 
-        # Останавливаем hourly-обновление активных фьючерсов.
-        if active_futures_task is not None and not active_futures_task.done():
-            active_futures_task.cancel()
+        # Если история ещё не завершилась — отменяем.
+        if history_task is not None and not history_task.done():
+            history_task.cancel()
 
             try:
-                await active_futures_task
+                await history_task
             except asyncio.CancelledError:
                 pass
 

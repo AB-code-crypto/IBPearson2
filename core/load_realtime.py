@@ -13,13 +13,9 @@ from core.logger import get_logger, log_info, log_warning
 
 logger = get_logger(__name__)
 
-# Код инструмента, по которому хотим получать real-time 5-second бары.
-REALTIME_INSTRUMENT_CODE = "MNQ"
-
-# Конкретный фьючерс, с которым сейчас работаем.
-# Пока задача узкая: просто подписаться на один известный контракт
-# и начать получать real-time бары.
-REALTIME_CONTRACT_LOCAL_SYMBOL = "MNQH6"
+# В realtime сейчас работаем только с одним активным фьючерсом.
+# Сам активный контракт приходит снаружи в виде словаря ACTIVE_FUTURES,
+# например: {"MNQ": "MNQM6"}.
 
 # reqRealTimeBars у IB поддерживает только 5-секундные бары.
 REALTIME_BAR_SIZE_SECONDS = 5
@@ -79,6 +75,26 @@ def get_contract_row_by_local_symbol(instrument_row, local_symbol):
     raise ValueError(
         f"Контракт {local_symbol} не найден в списке contracts для инструмента"
     )
+
+
+def get_realtime_active_future(active_futures):
+    # Для realtime сейчас ожидаем ровно один активный фьючерс.
+    # Снаружи нам передают словарь вида {"MNQ": "MNQM6"}.
+    if not isinstance(active_futures, dict):
+        raise ValueError("ACTIVE_FUTURES должен быть словарём")
+
+    if len(active_futures) == 0:
+        raise ValueError("ACTIVE_FUTURES пуст: нет активного фьючерса для realtime")
+
+    instrument_code, contract_local_symbol = next(iter(active_futures.items()))
+
+    if not isinstance(instrument_code, str) or not instrument_code:
+        raise ValueError("Некорректный ключ в ACTIVE_FUTURES")
+
+    if not isinstance(contract_local_symbol, str) or not contract_local_symbol:
+        raise ValueError("Некорректное значение localSymbol в ACTIVE_FUTURES")
+
+    return instrument_code, contract_local_symbol
 
 
 async def wait_for_realtime_ready(ib, ib_health):
@@ -361,15 +377,14 @@ def build_realtime_update_handler(contract, what_to_show, conn, table_name):
     return on_bar_update
 
 
-async def load_realtime_task(ib, ib_health, settings):
+async def load_realtime_task(ib, ib_health, settings, active_futures):
     # Текущая realtime-версия loader-а:
-    # - берём один заранее выбранный контракт;
+    # - берём один активный контракт из ACTIVE_FUTURES;
     # - открываем отдельные подписки на BID и ASK 5-second bars;
     # - пишем новые бары в SQLite в таблицу вида MNQ_5s;
     # - BID и ASK пишем независимо по мере их прихода;
     # - никакой переподписки и логики ролловера здесь нет.
-    instrument_code = REALTIME_INSTRUMENT_CODE
-    contract_local_symbol = REALTIME_CONTRACT_LOCAL_SYMBOL
+    instrument_code, contract_local_symbol = get_realtime_active_future(active_futures)
 
     instrument_row = get_realtime_instrument_row(instrument_code)
     contract_row = get_contract_row_by_local_symbol(instrument_row, contract_local_symbol)
