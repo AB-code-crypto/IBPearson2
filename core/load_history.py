@@ -87,6 +87,18 @@ def format_utc_ts(ts):
     return format_utc(datetime.fromtimestamp(ts, tz=timezone.utc))
 
 
+def parse_utc_iso_to_ts(utc_text):
+    # Преобразуем ISO-строку вида 2024-03-13T22:00:00Z в unix timestamp.
+    #
+    # В проекте договорились хранить в реестре контрактов именно UTC-время
+    # в текстовом виде и не дублировать рядом ещё и заранее посчитанный timestamp.
+    # Поэтому в загрузчике, где нужен timestamp для арифметики интервалов,
+    # считаем его локально и явно.
+    dt = datetime.strptime(utc_text, "%Y-%m-%dT%H:%M:%SZ")
+    dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp())
+
+
 def format_exception_for_log(exc):
     # У TimeoutError строковое представление часто пустое, и в логе это выглядит неинформативно.
     # Поэтому всегда добавляем имя класса ошибки, а текст — только если он есть.
@@ -1177,8 +1189,13 @@ async def process_futures_contract(
 
     bar_size_seconds = get_bar_size_seconds(instrument_row["barSizeSetting"])
 
-    active_from_ts = contract_row["active_from_ts_utc"]
-    active_to_ts = contract_row["active_to_ts_utc"]
+    # Рабочие границы контракта берём из canonical UTC-строк.
+    #
+    # Это убирает необходимость хранить рядом дублирующие active_from_ts_utc /
+    # active_to_ts_utc и исключает расхождение между строковым временем и заранее
+    # кем-то когда-то посчитанным timestamp.
+    active_from_ts = parse_utc_iso_to_ts(contract_row["active_from_utc"])
+    active_to_ts = parse_utc_iso_to_ts(contract_row["active_to_utc"])
 
     log_info(
         logger,
@@ -1311,7 +1328,9 @@ async def process_index_instrument(ib, ib_health, settings, instrument_code, ins
 
     bar_size_seconds = get_bar_size_seconds(instrument_row["barSizeSetting"])
 
-    active_from_ts = instrument_row["active_from_ts_utc"]
+    # Для индекса придерживаемся той же логики,
+    # что и для фьючерсов: timestamp считаем локально из UTC-строки.
+    active_from_ts = parse_utc_iso_to_ts(instrument_row["active_from_utc"])
 
     log_info(
         logger,
