@@ -92,14 +92,7 @@ async def main():
 
         # Потом переходим на реальные котировки.
         realtime_task = asyncio.create_task(
-            load_realtime_task(
-                ib,
-                ib_health,
-                settings,
-                active_futures,
-                recent_backfill_state,
-            )
-        )
+            load_realtime_task(ib, ib_health, settings, active_futures, recent_backfill_state, ))
 
         # И дальше уже держим процесс живым.
         await realtime_task

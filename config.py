@@ -33,6 +33,6 @@ settings_live = Settings()
 settings_alt = Settings(
     ib_client_id=104,
 )
-settings_for_test = Settings(
+settings_for_gap = Settings(
     ib_client_id=105,
 )
