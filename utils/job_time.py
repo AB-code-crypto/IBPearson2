@@ -191,8 +191,7 @@ if __name__ == "__main__":
 
     # 2) Конкретное UTC-время
     status = get_mnq_ibkr_mode(datetime(2026, 3, 12, 14, 0), input_tz="UTC")
-    print(f"{status["overall_mode"]}, {status["can_trade_via_ibkr"]}\n")
-
+    print(f"{status['overall_mode']}, {status['can_trade_via_ibkr']}\n")
     # 3) Московское naive-время
     status = get_mnq_ibkr_mode(datetime(2026, 3, 12, 18, 30), input_tz="Europe/Moscow")
     print(f"{status}\n")

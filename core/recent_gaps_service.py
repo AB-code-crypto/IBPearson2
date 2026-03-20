@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from pathlib import Path
 
 from contracts import Instrument
 from core.load_history import (
@@ -75,17 +74,6 @@ def get_recent_backfill_range(instrument_code, contract_local_symbol, sync_ts):
     )
 
 
-def resolve_price_db_path(settings):
-    # Относительный путь из config.py считаем относительно корня проекта.
-    db_path = Path(settings.price_db_path)
-
-    if db_path.is_absolute():
-        return db_path
-
-    project_root = Path(__file__).resolve().parent.parent
-    return project_root / db_path
-
-
 async def backfill_recent_hour(ib, ib_health, settings, instrument_code, contract_local_symbol, sync_ts):
     # Разово догружаем последний час историей до первого синхронного realtime-бара.
     #
@@ -126,7 +114,7 @@ async def backfill_recent_hour(ib, ib_health, settings, instrument_code, contrac
     if to_ts <= from_ts:
         return False
 
-    db_path = resolve_price_db_path(settings)
+    db_path = settings.price_db_path
     table_name = build_table_name(instrument_code, instrument_row["barSizeSetting"])
     contract = build_futures_contract(instrument_code, instrument_row, contract_row)
 

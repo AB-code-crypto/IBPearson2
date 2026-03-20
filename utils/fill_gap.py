@@ -1,7 +1,6 @@
 import asyncio
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from ib_async import Contract
 
 from config import settings_for_gap as settings
@@ -10,23 +9,12 @@ from core.db_sql import get_create_quotes_table_sql, get_upsert_quotes_sql
 from core.ib_connector import connect_ib, disconnect_ib
 from core.logger import setup_logging, get_logger
 
-
 # ==============================
 # Настройки скрипта
 # ==============================
-def resolve_db_path(db_path_text):
-    # Относительный путь из config.py считаем относительно корня проекта.
-    db_path = Path(db_path_text)
-
-    if db_path.is_absolute():
-        return db_path
-
-    project_root = Path(__file__).resolve().parent.parent
-    return project_root / db_path
-
 
 # Путь к ценовой БД.
-DB_PATH = resolve_db_path(settings.price_db_path)
+DB_PATH = settings.price_db_path
 
 # Код инструмента из contracts.py.
 INSTRUMENT_CODE = "MNQ"

@@ -1,16 +1,15 @@
 import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
+from config import settings_live as settings
 
 # ============================================================================
 # НАСТРОЙКИ СКРИПТА
 # ============================================================================
 # Скрипт предполагается запускать из папки utils.
 # Поэтому путь до корня проекта вычисляем относительно самого файла.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # База данных, в которой ищем дыры.
-DB_PATH = PROJECT_ROOT / "data" / "price.sqlite3"
+DB_PATH = settings.price_db_path
 
 # Таблица, в которой ищем дыры.
 TABLE_NAME = "MNQ_5s"

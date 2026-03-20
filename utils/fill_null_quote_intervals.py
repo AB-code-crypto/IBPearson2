@@ -1,7 +1,6 @@
 import asyncio
 import sqlite3
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 
 from config import settings_for_gap as settings
 from contracts import Instrument
@@ -20,7 +19,6 @@ from core.load_history import (
 )
 from core.logger import setup_logging, get_logger, log_info, log_warning
 
-
 # ============================================================================
 # НАСТРОЙКИ СКРИПТА
 # ============================================================================
@@ -38,16 +36,6 @@ logger = get_logger(__name__)
 # ============================================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================================================
-def resolve_db_path(db_path_text):
-    # Относительный путь из config.py считаем относительно корня проекта.
-    db_path = Path(db_path_text)
-
-    if db_path.is_absolute():
-        return db_path
-
-    project_root = Path(__file__).resolve().parent.parent
-    return project_root / db_path
-
 
 def get_instrument_row(instrument_code):
     # Получаем инструмент из contracts.py и сразу валидируем, что это FUT.
@@ -181,8 +169,8 @@ def build_side_intervals(problem_rows, what_to_show):
                 "start_ts": current_start_ts,
                 "end_ts_exclusive": current_prev_ts + EXPECTED_STEP_SECONDS,
                 "bars_count": (
-                    (current_prev_ts - current_start_ts) // EXPECTED_STEP_SECONDS
-                ) + 1,
+                                      (current_prev_ts - current_start_ts) // EXPECTED_STEP_SECONDS
+                              ) + 1,
             }
         )
 
@@ -198,8 +186,8 @@ def build_side_intervals(problem_rows, what_to_show):
                 "start_ts": current_start_ts,
                 "end_ts_exclusive": current_prev_ts + EXPECTED_STEP_SECONDS,
                 "bars_count": (
-                    (current_prev_ts - current_start_ts) // EXPECTED_STEP_SECONDS
-                ) + 1,
+                                      (current_prev_ts - current_start_ts) // EXPECTED_STEP_SECONDS
+                              ) + 1,
             }
         )
 
@@ -261,16 +249,16 @@ def write_single_side_quote_rows_to_sqlite(db_path, table_name, rows, what_to_sh
 
 
 async def load_quote_side_chunk_once(
-    ib,
-    ib_health,
-    db_path,
-    table_name,
-    contract,
-    start_dt,
-    end_dt,
-    bar_size_setting,
-    what_to_show,
-    use_rth,
+        ib,
+        ib_health,
+        db_path,
+        table_name,
+        contract,
+        start_dt,
+        end_dt,
+        bar_size_setting,
+        what_to_show,
+        use_rth,
 ):
     # Одна атомарная закачка только ASK или только BID для одного chunk.
     #
@@ -385,16 +373,16 @@ async def load_quote_side_chunk_once(
 
 
 async def fill_side_interval(
-    ib,
-    ib_health,
-    db_path,
-    table_name,
-    contract,
-    bar_size_setting,
-    use_rth,
-    what_to_show,
-    start_ts,
-    end_ts_exclusive,
+        ib,
+        ib_health,
+        db_path,
+        table_name,
+        contract,
+        bar_size_setting,
+        use_rth,
+        what_to_show,
+        start_ts,
+        end_ts_exclusive,
 ):
     # Докачиваем один полуоткрытый интервал только по одной стороне.
     if end_ts_exclusive <= start_ts:
@@ -404,9 +392,9 @@ async def fill_side_interval(
     total_rows_written = 0
 
     for chunk_start_ts, chunk_end_ts in iter_chunks(
-        start_ts,
-        end_ts_exclusive,
-        chunk_seconds,
+            start_ts,
+            end_ts_exclusive,
+            chunk_seconds,
     ):
         chunk_start_dt = datetime.fromtimestamp(chunk_start_ts, tz=timezone.utc)
         chunk_end_dt = datetime.fromtimestamp(chunk_end_ts, tz=timezone.utc)
@@ -467,7 +455,7 @@ def print_intervals(intervals):
 async def main():
     instrument_row = get_instrument_row(INSTRUMENT_CODE)
     table_name = build_table_name(INSTRUMENT_CODE, instrument_row["barSizeSetting"])
-    db_path = resolve_db_path(settings.price_db_path)
+    db_path = settings.price_db_path
 
     print(f"База данных: {db_path}")
     print(f"Таблица: {table_name}")

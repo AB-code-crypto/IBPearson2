@@ -229,3 +229,36 @@ def get_create_prepared_quotes_indexes_sql(table_name):
         ON {table_name}(hour_slot, hour_start_ts);
         """
     ]
+
+
+def get_delete_prepared_hour_sql(table_name):
+    # Удаляем из prepared-таблицы все строки одного исторического часа.
+    #
+    # Это удобно для простого и надёжного сценария:
+    # сначала полностью удалили час, потом заново вставили все 720 строк.
+    return f"""
+    DELETE FROM {table_name}
+    WHERE hour_start_ts = ?
+    ;
+    """
+
+
+def get_insert_prepared_quote_sql(table_name):
+    # Простая INSERT-команда для prepared-таблицы.
+    #
+    # Здесь не используем UPSERT, потому что в разовом скрипте
+    # проще и надёжнее сначала удалить целый час, а потом вставить его заново.
+    return f"""
+    INSERT INTO {table_name} (
+        hour_start_ts,
+        hour_start,
+        hour_slot,
+        contract,
+        bar_index,
+        y,
+        sum_y,
+        sum_y2
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ;
+    """

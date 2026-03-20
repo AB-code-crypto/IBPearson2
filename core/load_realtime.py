@@ -1,7 +1,7 @@
 import asyncio
 import math
 import sqlite3
-from datetime import datetime, timezone
+from datetime import timezone
 from pathlib import Path
 
 from ib_async import Contract
@@ -15,7 +15,6 @@ from core.recent_gaps_service import (
     get_recent_backfill_sync_ts,
     backfill_recent_hour,
 )
-
 
 logger = get_logger(__name__)
 
@@ -185,21 +184,6 @@ def format_utc(dt):
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def resolve_db_path(db_path_text):
-    # Преобразуем путь из config.py в абсолютный путь проекта.
-    #
-    # main.py лежит в корне проекта, папки core и data тоже лежат в корне.
-    # Поэтому относительные пути вида data/price.sqlite3 резолвим от корня проекта,
-    # а не от папки core, где находится сам realtime loader.
-    db_path = Path(db_path_text)
-
-    if db_path.is_absolute():
-        return db_path
-
-    project_root = Path(__file__).resolve().parent.parent
-    return (project_root / db_path).resolve()
-
-
 def build_table_name(instrument_code, bar_size_setting):
     # Простая и предсказуемая схема имени таблицы.
     suffix = (
@@ -293,12 +277,25 @@ def format_realtime_bar_message(contract, what_to_show, bar):
 def open_quotes_db(db_path):
     # Открываем только уже существующую SQLite БД.
     #
-    # SQLite по умолчанию может создать новый файл, если путь неверный.
-    # Для realtime loader это недопустимо, поэтому открываем БД в режиме rw
-    # через URI: если файла нет, соединение сразу упадёт с ошибкой.
-    db_uri = f"file:{db_path}?mode=rw"
+    # ВАЖНО:
+    # 1) settings.price_db_path теперь уже абсолютный путь из config.py,
+    #    поэтому здесь не нужно ничего дополнительно resolve-ить.
+    #
+    # 2) Нам нельзя молча создавать новую пустую БД, если путь ошибочный.
+    #    SQLite по умолчанию именно так и делает при обычном connect().
+    #    Поэтому перед подключением ЯВНО проверяем, что файл уже существует.
+    #
+    # 3) Используем обычный sqlite3.connect(db_path), а не URI-режим
+    #    file:...?... Это проще и обычно надёжнее на Windows.
+    db_path_obj = Path(db_path)
 
-    conn = sqlite3.connect(db_uri, uri=True)
+    if not db_path_obj.is_file():
+        raise FileNotFoundError(
+            f"Файл SQLite БД не найден: {db_path_obj}. "
+            f"Realtime loader не должен создавать новую БД автоматически."
+        )
+
+    conn = sqlite3.connect(str(db_path_obj))
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA busy_timeout=5000;")
@@ -343,7 +340,6 @@ def write_realtime_bar_to_sqlite(conn, table_name, contract_name, what_to_show, 
     conn.commit()
 
 
-
 def reset_recent_backfill_state(recent_backfill_state):
     # Сбрасываем состояние разовой докачки последнего часа.
     backfill_task = recent_backfill_state["backfill_task"]
@@ -363,9 +359,9 @@ def is_realtime_ready_now(ib, ib_health):
     # - backend IB доступен,
     # - market data farm в норме.
     return (
-        ib.isConnected()
-        and ib_health.ib_backend_ok
-        and ib_health.market_data_ok
+            ib.isConnected()
+            and ib_health.ib_backend_ok
+            and ib_health.market_data_ok
     )
 
 
@@ -517,7 +513,7 @@ async def load_realtime_task(ib, ib_health, settings, active_futures, recent_bac
 
     use_rth = instrument_row["useRTH"]
     table_name = build_table_name(instrument_code, instrument_row["barSizeSetting"])
-    db_path = resolve_db_path(settings.price_db_path)
+    db_path = settings.price_db_path
     db_conn = None
 
     # Храним все открытые подписки и их обработчики,
