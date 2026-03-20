@@ -43,6 +43,15 @@ async def main():
     history_task = None
     realtime_task = None
 
+    # Простое состояние разового добора последнего часа после старта realtime
+    # и после последующих реконнектов.
+    recent_backfill_state = {
+        "first_bid_ts": None,
+        "first_ask_ts": None,
+        "last_backfill_completed_sync_ts": None,
+        "backfill_task": None,
+    }
+
     # Текст итогового сообщения при остановке.
     shutdown_message = "Робот завершает работу"
 
@@ -82,7 +91,15 @@ async def main():
         await history_task
 
         # Потом переходим на реальные котировки.
-        realtime_task = asyncio.create_task(load_realtime_task(ib, ib_health, settings, active_futures))
+        realtime_task = asyncio.create_task(
+            load_realtime_task(
+                ib,
+                ib_health,
+                settings,
+                active_futures,
+                recent_backfill_state,
+            )
+        )
 
         # И дальше уже держим процесс живым.
         await realtime_task

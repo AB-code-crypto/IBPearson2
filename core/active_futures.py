@@ -5,9 +5,6 @@ from core.logger import get_logger, log_warning
 
 logger = get_logger(__name__)
 
-# Как часто обновляем словарь активных фьючерсов.
-ACTIVE_FUTURES_REFRESH_SECONDS = 3600
-
 
 def parse_server_time_text(server_time_text):
     # Разбираем время сервера IB в UTC.

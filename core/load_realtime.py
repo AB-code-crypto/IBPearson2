@@ -9,6 +9,12 @@ from ib_async import Contract
 from contracts import Instrument
 from core.db_sql import get_upsert_quotes_ask_sql, get_upsert_quotes_bid_sql
 from core.logger import get_logger, log_info, log_warning
+from core.recent_gaps_service import (
+    note_first_realtime_bar_timestamps,
+    is_first_synced_bid_ask_bar_ready,
+    get_recent_backfill_sync_ts,
+    backfill_recent_hour,
+)
 
 
 logger = get_logger(__name__)
@@ -337,7 +343,109 @@ def write_realtime_bar_to_sqlite(conn, table_name, contract_name, what_to_show, 
     conn.commit()
 
 
-def build_realtime_update_handler(contract, what_to_show, conn, table_name):
+
+def reset_recent_backfill_state(recent_backfill_state):
+    # Сбрасываем состояние разовой докачки последнего часа.
+    backfill_task = recent_backfill_state["backfill_task"]
+
+    if backfill_task is not None and not backfill_task.done():
+        backfill_task.cancel()
+
+    recent_backfill_state["first_bid_ts"] = None
+    recent_backfill_state["first_ask_ts"] = None
+    recent_backfill_state["last_backfill_completed_sync_ts"] = None
+    recent_backfill_state["backfill_task"] = None
+
+
+def is_realtime_ready_now(ib, ib_health):
+    # Считаем realtime ready только если:
+    # - локальное API-соединение живо,
+    # - backend IB доступен,
+    # - market data farm в норме.
+    return (
+        ib.isConnected()
+        and ib_health.ib_backend_ok
+        and ib_health.market_data_ok
+    )
+
+
+def maybe_start_recent_backfill_task(
+        ib,
+        ib_health,
+        settings,
+        instrument_code,
+        contract_local_symbol,
+        recent_backfill_state,
+        what_to_show,
+        bar_time_ts,
+):
+    # Обновляем состояние первого BID / ASK бара и,
+    # когда получен первый синхронный BID/ASK bar_time_ts,
+    # один раз запускаем дозагрузку последнего часа.
+    first_bid_ts, first_ask_ts = note_first_realtime_bar_timestamps(
+        first_bid_ts=recent_backfill_state["first_bid_ts"],
+        first_ask_ts=recent_backfill_state["first_ask_ts"],
+        what_to_show=what_to_show,
+        bar_time_ts=bar_time_ts,
+    )
+
+    recent_backfill_state["first_bid_ts"] = first_bid_ts
+    recent_backfill_state["first_ask_ts"] = first_ask_ts
+
+    if not is_first_synced_bid_ask_bar_ready(first_bid_ts, first_ask_ts):
+        return
+
+    sync_ts = get_recent_backfill_sync_ts(first_bid_ts, first_ask_ts)
+
+    if recent_backfill_state["last_backfill_completed_sync_ts"] == sync_ts:
+        return
+
+    backfill_task = recent_backfill_state["backfill_task"]
+    if backfill_task is not None and not backfill_task.done():
+        return
+
+    async def run_recent_backfill():
+        try:
+            was_loaded = await backfill_recent_hour(
+                ib=ib,
+                ib_health=ib_health,
+                settings=settings,
+                instrument_code=instrument_code,
+                contract_local_symbol=contract_local_symbol,
+                sync_ts=sync_ts,
+            )
+
+            if was_loaded:
+                recent_backfill_state["last_backfill_completed_sync_ts"] = sync_ts
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception as exc:
+            log_warning(
+                logger,
+                f"Разовая докачка последнего часа завершилась ошибкой: {exc}",
+                to_telegram=False,
+            )
+
+        finally:
+            recent_backfill_state["backfill_task"] = None
+
+    recent_backfill_state["backfill_task"] = asyncio.create_task(run_recent_backfill())
+
+
+def build_realtime_update_handler(
+        ib,
+        ib_health,
+        settings,
+        instrument_code,
+        contract_local_symbol,
+        recent_backfill_state,
+        contract,
+        what_to_show,
+        conn,
+        table_name,
+):
     # Для каждой отдельной подписки делаем свой обработчик,
     # чтобы BID и ASK обрабатывались независимо и без догадок по контексту.
     def on_bar_update(bars, has_new_bar):
@@ -374,10 +482,23 @@ def build_realtime_update_handler(contract, what_to_show, conn, table_name):
             to_telegram=False,
         )
 
+        bar_time_ts = int(bar.time.astimezone(timezone.utc).timestamp())
+
+        maybe_start_recent_backfill_task(
+            ib=ib,
+            ib_health=ib_health,
+            settings=settings,
+            instrument_code=instrument_code,
+            contract_local_symbol=contract_local_symbol,
+            recent_backfill_state=recent_backfill_state,
+            what_to_show=what_to_show,
+            bar_time_ts=bar_time_ts,
+        )
+
     return on_bar_update
 
 
-async def load_realtime_task(ib, ib_health, settings, active_futures):
+async def load_realtime_task(ib, ib_health, settings, active_futures, recent_backfill_state):
     # Текущая realtime-версия loader-а:
     # - берём один активный контракт из ACTIVE_FUTURES;
     # - открываем отдельные подписки на BID и ASK 5-second bars;
@@ -436,6 +557,12 @@ async def load_realtime_task(ib, ib_health, settings, active_futures):
             )
 
             update_handler = build_realtime_update_handler(
+                ib=ib,
+                ib_health=ib_health,
+                settings=settings,
+                instrument_code=instrument_code,
+                contract_local_symbol=contract_local_symbol,
+                recent_backfill_state=recent_backfill_state,
                 contract=contract,
                 what_to_show=what_to_show,
                 conn=db_conn,
@@ -459,8 +586,21 @@ async def load_realtime_task(ib, ib_health, settings, active_futures):
             )
 
         # Дальше просто держим подписки живыми и ждём новые бары.
+        #
+        # Если realtime ready-состояние пропало, сбрасываем состояние разовой
+        # докачки последнего часа. После восстановления и появления нового
+        # первого синхронного BID/ASK бара сервис сможет снова один раз
+        # дозагрузить последний час.
+        was_realtime_ready = is_realtime_ready_now(ib, ib_health)
+
         while True:
-            await asyncio.sleep(3600)
+            realtime_ready_now = is_realtime_ready_now(ib, ib_health)
+
+            if was_realtime_ready and not realtime_ready_now:
+                reset_recent_backfill_state(recent_backfill_state)
+
+            was_realtime_ready = realtime_ready_now
+            await asyncio.sleep(1)
 
     finally:
         for subscription_row in current_subscriptions:

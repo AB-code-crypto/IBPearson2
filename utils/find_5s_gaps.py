@@ -231,10 +231,11 @@ def print_gap(gap_number, gap_start_ts, gap_end_ts, reason):
     #
     # В случае аномальной последовательности reason будет содержать пояснение.
     missing_bars = get_missing_bars_count(gap_start_ts, gap_end_ts)
+    gap_end_ts_half_open = gap_end_ts + EXPECTED_STEP_SECONDS
 
     print(
         f"[{gap_number}] Найдена дырка: "
-        f"{format_utc_ts(gap_start_ts)} -> {format_utc_ts(gap_end_ts)} | "
+        f"{format_utc_ts(gap_start_ts)} -> {format_utc_ts(gap_end_ts_half_open)} | "
         f"пропущено баров: {missing_bars} | причина: {reason}"
     )
 
