@@ -10,7 +10,7 @@ class Settings:
     # Файл SQLite БД
     price_db_path: str = "data/price.sqlite3"
     trade_db_path: str = "data/trade.sqlite3"
-    pearson_cash_db_path: str = "data/pearson_cash.sqlite3"
+    prepared_db_path: str = "data/prepared.sqlite3"
 
     # ==============================
     # Telegram bot / channels

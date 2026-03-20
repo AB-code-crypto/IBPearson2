@@ -1,8 +1,12 @@
 import sqlite3
 
 from contracts import Instrument
-from core.db_sql import get_create_quotes_table_sql, get_create_ohlc_table_sql
 from core.logger import get_logger, log_info
+from core.db_sql import (
+    get_create_quotes_table_sql,
+    get_create_prepared_quotes_table_sql,
+    get_create_prepared_quotes_indexes_sql,
+)
 
 logger = get_logger(__name__)
 
@@ -27,70 +31,88 @@ def build_table_name(instrument_code, bar_size_setting):
     return f"{instrument_code}_{suffix}"
 
 
-def create_table_if_missing(db_path, create_sql):
-    # Создаём таблицу в SQLite, если её ещё нет.
+def create_db_objects_if_missing(db_path, sql_list):
+    # Выполняем набор CREATE-операторов в одной транзакции.
     #
-    # Сам файл БД SQLite создастся автоматически при первом подключении,
-    # поэтому отдельный шаг "создать файл БД" нам не нужен.
+    # Подходит и для одной таблицы, и для таблицы + индексов.
+    # Если файл БД ещё не существует, SQLite создаст его автоматически
+    # при первом подключении.
     conn = sqlite3.connect(db_path)
 
     try:
         conn.execute("PRAGMA busy_timeout=5000;")
-        conn.execute(create_sql)
+
+        for sql in sql_list:
+            conn.execute(sql)
+
         conn.commit()
     finally:
         conn.close()
 
 
 def initialize_price_database(settings):
-    # Создаём все таблицы, которые нужны ценовой БД на текущем этапе проекта.
+    # Создаём таблицы ценовой БД только для FUT-инструментов.
     #
-    # Логика простая:
-    # - для FUT создаём таблицу BID/ASK-котировок;
-    # - для IND создаём таблицу одиночного OHLC-потока.
+    # Сейчас работаем только с BID/ASK-таблицами фьючерсов.
     for instrument_code, instrument_row in Instrument.items():
+        if instrument_row["secType"] != "FUT":
+            continue
+
         table_name = build_table_name(
             instrument_code=instrument_code,
             bar_size_setting=instrument_row["barSizeSetting"],
         )
 
-        if instrument_row["secType"] == "FUT":
-            create_sql = get_create_quotes_table_sql(table_name)
-            create_table_if_missing(settings.price_db_path, create_sql)
+        sql_list = [
+            get_create_quotes_table_sql(table_name),
+        ]
 
-            log_info(
-                logger,
-                f"Проверил таблицу цен {table_name} в БД {settings.price_db_path}: FUT/BID-ASK",
-                to_telegram=False,
-            )
+        create_db_objects_if_missing(settings.price_db_path, sql_list)
+
+        log_info(
+            logger,
+            f"Проверил таблицу цен {table_name} в БД {settings.price_db_path}: FUT/BID-ASK",
+            to_telegram=False,
+        )
+
+
+def initialize_prepared_database(settings):
+    # Создаём таблицы prepared БД только для FUT-инструментов.
+    #
+    # Здесь хранятся подготовленные данные для первого шага поиска паттернов:
+    # y, sum_y, sum_y2 по завершённым историческим часам.
+    for instrument_code, instrument_row in Instrument.items():
+        if instrument_row["secType"] != "FUT":
             continue
 
-        if instrument_row["secType"] == "IND":
-            create_sql = get_create_ohlc_table_sql(table_name)
-            create_table_if_missing(settings.price_db_path, create_sql)
+        table_name = build_table_name(
+            instrument_code=instrument_code,
+            bar_size_setting=instrument_row["barSizeSetting"],
+        )
 
-            log_info(
-                logger,
-                f"Проверил таблицу цен {table_name} в БД {settings.price_db_path}: IND/OHLC",
-                to_telegram=False,
-            )
-            continue
+        sql_list = [
+            get_create_prepared_quotes_table_sql(table_name),
+            *get_create_prepared_quotes_indexes_sql(table_name),
+        ]
 
-        raise ValueError(
-            f"Неподдерживаемый secType в Instrument[{instrument_code}]: {instrument_row['secType']}"
+        create_db_objects_if_missing(settings.prepared_db_path, sql_list)
+
+        log_info(
+            logger,
+            f"Проверил prepared-таблицу {table_name} в БД {settings.prepared_db_path}: FUT/Pearson",
+            to_telegram=False,
         )
 
 
 async def initialize_databases(settings):
     # Точка входа инициализации всех проектных БД.
     #
-    # Пока на старте создаём только ценовую БД и нужные таблицы в ней.
-    # Позже сюда можно будет добавить:
-    # - БД кеша;
-    # - торговую БД;
-    # - служебные таблицы и другие структуры.
+    # На старте создаём:
+    # - ценовую БД;
+    # - prepared БД для первого шага поиска паттернов.
     log_info(logger, "Запускаю инициализацию проектных БД", to_telegram=False)
 
     initialize_price_database(settings)
+    initialize_prepared_database(settings)
 
     log_info(logger, "Инициализация проектных БД завершена", to_telegram=False)

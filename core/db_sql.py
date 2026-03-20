@@ -178,3 +178,54 @@ def get_upsert_ohlc_sql(table_name):
         bar_count = excluded.bar_count
     ;
     """
+
+
+def get_create_prepared_quotes_table_sql(table_name):
+    # Таблица подготовленных данных для первого шага поиска паттернов.
+    #
+    # Храним только то, что нужно для инкрементального Пирсона
+    # по историческим завершённым часам:
+    # - y
+    # - sum_y
+    # - sum_y2
+    #
+    # Один исторический час = 720 строк.
+    # Таблица находится в отдельной prepared DB, поэтому имя таблицы
+    # можно оставить таким же, как в price DB, например: MNQ_5s
+
+    return f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
+        hour_start_ts INTEGER NOT NULL,
+        hour_start    TEXT NOT NULL,
+        hour_slot     INTEGER NOT NULL,
+        contract      TEXT NOT NULL,
+
+        bar_index     INTEGER NOT NULL,
+
+        y             REAL NOT NULL,
+        sum_y         REAL NOT NULL,
+        sum_y2        REAL NOT NULL,
+
+        PRIMARY KEY (hour_start_ts, bar_index),
+
+        CHECK (hour_slot >= 0 AND hour_slot < 24),
+        CHECK (bar_index >= 0 AND bar_index < 720)
+    ) WITHOUT ROWID;
+    """
+
+
+def get_create_prepared_quotes_indexes_sql(table_name):
+    # Дополнительные индексы для prepared-таблицы.
+    #
+    # Основной сценарий выборки:
+    # - найти все исторические часы конкретного часа суток (hour_slot)
+    # - затем читать их по времени
+    #
+    # По PRIMARY KEY(hour_start_ts, bar_index) отдельный индекс на hour_start_ts
+    # не нужен: он уже покрывается началом первичного ключа.
+    return [
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{table_name}_hour_slot_hour_start_ts
+        ON {table_name}(hour_slot, hour_start_ts);
+        """
+    ]
