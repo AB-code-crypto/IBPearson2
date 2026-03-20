@@ -5,8 +5,8 @@ from config import settings_live as settings
 from contracts import Instrument
 from core.db_initializer import build_table_name
 from core.db_sql import (
-    get_delete_prepared_hour_sql,
-    get_insert_prepared_quote_sql,
+    delete_prepared_hour_sql,
+    insert_prepared_quote_sql,
 )
 
 
@@ -173,8 +173,8 @@ def save_prepared_rows(prepared_conn, table_name, hour_start_ts, prepared_rows):
     # 2) вставляем заново все 720 строк
     #
     # Всё делаем в одной транзакции.
-    delete_sql = get_delete_prepared_hour_sql(table_name)
-    insert_sql = get_insert_prepared_quote_sql(table_name)
+    delete_sql = delete_prepared_hour_sql(table_name)
+    insert_sql = insert_prepared_quote_sql(table_name)
 
     prepared_conn.execute("BEGIN")
 

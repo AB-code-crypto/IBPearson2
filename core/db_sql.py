@@ -1,4 +1,4 @@
-def get_create_quotes_table_sql(table_name):
+def create_quotes_table_sql(table_name):
     # Таблица для BID/ASK-баров.
     return f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
@@ -25,7 +25,7 @@ def get_create_quotes_table_sql(table_name):
     """
 
 
-def get_upsert_quotes_sql(table_name):
+def upsert_quotes_sql(table_name):
     # UPSERT для BID/ASK-таблицы.
     #
     # Этот вариант подходит, когда вся строка бара уже полностью собрана,
@@ -76,7 +76,7 @@ def get_upsert_quotes_sql(table_name):
     """
 
 
-def get_upsert_quotes_ask_sql(table_name):
+def upsert_quotes_ask_sql(table_name):
     # UPSERT только для ASK-стороны realtime-бара.
     #
     # Обновляем только ask_* поля и не трогаем bid_*.
@@ -104,7 +104,7 @@ def get_upsert_quotes_ask_sql(table_name):
     """
 
 
-def get_upsert_quotes_bid_sql(table_name):
+def upsert_quotes_bid_sql(table_name):
     # UPSERT только для BID-стороны realtime-бара.
     #
     # Обновляем только bid_* поля и не трогаем ask_*.
@@ -130,7 +130,7 @@ def get_upsert_quotes_bid_sql(table_name):
     """
 
 
-def get_create_ohlc_table_sql(table_name):
+def create_ohlc_table_sql(table_name):
     # Таблица для одиночного потока OHLC, например VIX/TRADES.
     return f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
@@ -150,7 +150,7 @@ def get_create_ohlc_table_sql(table_name):
     """
 
 
-def get_upsert_ohlc_sql(table_name):
+def upsert_ohlc_sql(table_name):
     # UPSERT для одиночного OHLC-потока.
     return f"""
     INSERT INTO {table_name} (
@@ -180,7 +180,7 @@ def get_upsert_ohlc_sql(table_name):
     """
 
 
-def get_create_prepared_quotes_table_sql(table_name):
+def create_prepared_quotes_table_sql(table_name):
     # Таблица подготовленных данных для первого шага поиска паттернов.
     #
     # Храним только то, что нужно для инкрементального Пирсона
@@ -214,7 +214,7 @@ def get_create_prepared_quotes_table_sql(table_name):
     """
 
 
-def get_create_prepared_quotes_indexes_sql(table_name):
+def create_prepared_quotes_indexes_sql(table_name):
     # Дополнительные индексы для prepared-таблицы.
     #
     # Основной сценарий выборки:
@@ -231,7 +231,7 @@ def get_create_prepared_quotes_indexes_sql(table_name):
     ]
 
 
-def get_delete_prepared_hour_sql(table_name):
+def delete_prepared_hour_sql(table_name):
     # Удаляем из prepared-таблицы все строки одного исторического часа.
     #
     # Это удобно для простого и надёжного сценария:
@@ -243,7 +243,7 @@ def get_delete_prepared_hour_sql(table_name):
     """
 
 
-def get_insert_prepared_quote_sql(table_name):
+def insert_prepared_quote_sql(table_name):
     # Простая INSERT-команда для prepared-таблицы.
     #
     # Здесь не используем UPSERT, потому что в разовом скрипте

@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 
 from config import settings_for_gap as settings
 from contracts import Instrument
-from core.db_sql import get_upsert_quotes_ask_sql, get_upsert_quotes_bid_sql
+from core.db_sql import upsert_quotes_ask_sql, upsert_quotes_bid_sql
 from core.ib_connector import connect_ib, disconnect_ib
 from core.load_history import (
     HISTORICAL_REQUEST_DELAY_SECONDS,
@@ -230,9 +230,9 @@ def write_single_side_quote_rows_to_sqlite(db_path, table_name, rows, what_to_sh
         return
 
     if what_to_show == "ASK":
-        upsert_sql = get_upsert_quotes_ask_sql(table_name)
+        upsert_sql = upsert_quotes_ask_sql(table_name)
     elif what_to_show == "BID":
-        upsert_sql = get_upsert_quotes_bid_sql(table_name)
+        upsert_sql = upsert_quotes_bid_sql(table_name)
     else:
         raise ValueError(f"Неподдерживаемая сторона: {what_to_show}")
 

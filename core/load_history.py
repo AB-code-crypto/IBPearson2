@@ -17,10 +17,10 @@ from contracts import Instrument
 # Из db_sql берём SQL-шаблоны создания таблиц и upsert.
 # Структуру таблиц держим централизованно в одном месте.
 from core.db_sql import (
-    get_create_quotes_table_sql,
-    get_upsert_quotes_sql,
-    get_create_ohlc_table_sql,
-    get_upsert_ohlc_sql,
+    create_quotes_table_sql,
+    upsert_quotes_sql,
+    create_ohlc_table_sql,
+    upsert_ohlc_sql,
 )
 
 # Из logger берём:
@@ -427,8 +427,8 @@ def build_ohlc_rows(bars, contract_name):
 
 def write_quote_rows_to_sqlite(db_path, table_name, rows):
     # Записываем BID/ASK строки в SQLite через UPSERT.
-    create_sql = get_create_quotes_table_sql(table_name)
-    upsert_sql = get_upsert_quotes_sql(table_name)
+    create_sql = create_quotes_table_sql(table_name)
+    upsert_sql = upsert_quotes_sql(table_name)
 
     conn = sqlite3.connect(db_path)
 
@@ -447,8 +447,8 @@ def write_quote_rows_to_sqlite(db_path, table_name, rows):
 
 def write_ohlc_rows_to_sqlite(db_path, table_name, rows):
     # Записываем одиночный OHLC-поток в SQLite через UPSERT.
-    create_sql = get_create_ohlc_table_sql(table_name)
-    upsert_sql = get_upsert_ohlc_sql(table_name)
+    create_sql = create_ohlc_table_sql(table_name)
+    upsert_sql = upsert_ohlc_sql(table_name)
 
     conn = sqlite3.connect(db_path)
 

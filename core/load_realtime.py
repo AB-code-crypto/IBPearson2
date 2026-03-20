@@ -7,7 +7,7 @@ from pathlib import Path
 from ib_async import Contract
 
 from contracts import Instrument
-from core.db_sql import get_upsert_quotes_ask_sql, get_upsert_quotes_bid_sql
+from core.db_sql import upsert_quotes_ask_sql, upsert_quotes_bid_sql
 from core.logger import get_logger, log_info, log_warning
 from core.recent_gaps_service import (
     note_first_realtime_bar_timestamps,
@@ -312,7 +312,7 @@ def write_realtime_bar_to_sqlite(conn, table_name, contract_name, what_to_show, 
     bar_time = format_utc(dt)
 
     if what_to_show == "ASK":
-        sql = get_upsert_quotes_ask_sql(table_name)
+        sql = upsert_quotes_ask_sql(table_name)
         params = (
             bar_time_ts,
             bar_time,
@@ -323,7 +323,7 @@ def write_realtime_bar_to_sqlite(conn, table_name, contract_name, what_to_show, 
             bar.close,
         )
     elif what_to_show == "BID":
-        sql = get_upsert_quotes_bid_sql(table_name)
+        sql = upsert_quotes_bid_sql(table_name)
         params = (
             bar_time_ts,
             bar_time,

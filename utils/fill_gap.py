@@ -5,7 +5,7 @@ from ib_async import Contract
 
 from config import settings_for_gap as settings
 from contracts import Instrument
-from core.db_sql import get_create_quotes_table_sql, get_upsert_quotes_sql
+from core.db_sql import create_quotes_table_sql, upsert_quotes_sql
 from core.ib_connector import connect_ib, disconnect_ib
 from core.logger import setup_logging, get_logger
 
@@ -202,8 +202,8 @@ def build_quote_rows(bid_bars, ask_bars, contract_name):
 
 def write_quote_rows_to_sqlite(db_path, table_name, rows):
     # Пишем строки в ценовую БД через UPSERT.
-    create_sql = get_create_quotes_table_sql(table_name)
-    upsert_sql = get_upsert_quotes_sql(table_name)
+    create_sql = create_quotes_table_sql(table_name)
+    upsert_sql = upsert_quotes_sql(table_name)
 
     conn = sqlite3.connect(db_path)
 

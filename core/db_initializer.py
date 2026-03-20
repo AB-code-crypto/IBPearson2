@@ -3,9 +3,9 @@ import sqlite3
 from contracts import Instrument
 from core.logger import get_logger, log_info
 from core.db_sql import (
-    get_create_quotes_table_sql,
-    get_create_prepared_quotes_table_sql,
-    get_create_prepared_quotes_indexes_sql,
+    create_quotes_table_sql,
+    create_prepared_quotes_table_sql,
+    create_prepared_quotes_indexes_sql,
 )
 
 logger = get_logger(__name__)
@@ -64,7 +64,7 @@ def initialize_price_database(settings):
         )
 
         sql_list = [
-            get_create_quotes_table_sql(table_name),
+            create_quotes_table_sql(table_name),
         ]
 
         create_db_objects_if_missing(settings.price_db_path, sql_list)
@@ -91,8 +91,8 @@ def initialize_prepared_database(settings):
         )
 
         sql_list = [
-            get_create_prepared_quotes_table_sql(table_name),
-            *get_create_prepared_quotes_indexes_sql(table_name),
+            create_prepared_quotes_table_sql(table_name),
+            *create_prepared_quotes_indexes_sql(table_name),
         ]
 
         create_db_objects_if_missing(settings.prepared_db_path, sql_list)
