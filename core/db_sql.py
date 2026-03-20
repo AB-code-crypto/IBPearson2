@@ -262,3 +262,22 @@ def insert_prepared_quote_sql(table_name):
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ;
     """
+
+
+def count_prepared_hour_rows_sql(table_name):
+    return f"""
+    SELECT COUNT(*)
+    FROM {table_name}
+    WHERE hour_start_ts = ?
+    ;
+    """
+
+
+def select_price_time_bounds_sql(table_name):
+    return f"""
+    SELECT
+        MIN(bar_time_ts) AS min_ts,
+        MAX(bar_time_ts) AS max_ts
+    FROM {table_name}
+    ;
+    """

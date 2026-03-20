@@ -7,6 +7,7 @@ from pathlib import Path
 from ib_async import Contract
 
 from contracts import Instrument
+from core.db_initializer import build_table_name
 from core.db_sql import upsert_quotes_ask_sql, upsert_quotes_bid_sql
 from core.logger import get_logger, log_info, log_warning
 from core.recent_gaps_service import (
@@ -182,21 +183,6 @@ def format_utc(dt):
     # Универсальный формат времени в UTC для БД и логов.
     dt = dt.astimezone(timezone.utc)
     return dt.strftime("%Y-%m-%d %H:%M:%S")
-
-
-def build_table_name(instrument_code, bar_size_setting):
-    # Простая и предсказуемая схема имени таблицы.
-    suffix = (
-        bar_size_setting
-        .replace(" ", "")
-        .replace("secs", "s")
-        .replace("sec", "s")
-        .replace("hours", "h")
-        .replace("hour", "h")
-        .replace("mins", "m")
-        .replace("min", "m")
-    )
-    return f"{instrument_code}_{suffix}"
 
 
 def validate_price_value(value, field_name, stream_name, contract_name, bar_time_text):

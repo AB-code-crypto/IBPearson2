@@ -13,6 +13,7 @@ from ib_async import Contract
 # - какие у фьючерсов есть рабочие контракты;
 # - в каких UTC-интервалах каждый контракт считается активным.
 from contracts import Instrument
+from core.db_initializer import build_table_name
 
 # Из db_sql берём SQL-шаблоны создания таблиц и upsert.
 # Структуру таблиц держим централизованно в одном месте.
@@ -120,26 +121,6 @@ def build_duration_str(start_dt, end_dt):
         raise ValueError("Конец интервала должен быть строго больше начала")
 
     return f"{total_seconds} S"
-
-
-def build_table_name(instrument_code, bar_size_setting):
-    # Простая и предсказуемая схема имён таблиц.
-    #
-    # Примеры:
-    # - MNQ + 5 secs -> MNQ_5s
-    # - VIX + 1 hour -> VIX_1h
-    suffix = (
-        bar_size_setting
-        .replace(" ", "")
-        .replace("secs", "s")
-        .replace("sec", "s")
-        .replace("hours", "h")
-        .replace("hour", "h")
-        .replace("mins", "m")
-        .replace("min", "m")
-    )
-
-    return f"{instrument_code}_{suffix}"
 
 
 def get_bar_size_seconds(bar_size_setting):
