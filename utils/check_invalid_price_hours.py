@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from config import settings_live as settings
 from contracts import Instrument
 from core.db_initializer import build_table_name
-from core.prepared_builder import (
+from ts.prepared_builder import (
     hour_start_text_from_ts,
     load_price_rows_for_one_hour,
     validate_price_rows,

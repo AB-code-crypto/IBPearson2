@@ -32,9 +32,8 @@ class Settings:
 # Набор настроек для "боевого" подключения.
 settings_live = Settings()
 
-# Пример второго набора. Сейчас не используется.
-settings_alt = Settings(
-    ib_client_id=104,
+settings_for_demo = Settings(
+    ib_port=7497,
 )
 settings_for_gap = Settings(
     ib_client_id=105,

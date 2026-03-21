@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from config import settings_live as settings
 from contracts import Instrument
 from core.db_initializer import build_table_name
-from core.prepared_reader import load_prepared_hours_by_slot
+from ts.prepared_reader import load_prepared_hours_by_slot
 
 
 # ============================================================
