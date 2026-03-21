@@ -302,36 +302,18 @@ def select_prepared_hour_rows_sql(table_name):
     """
 
 
-def select_prepared_hour_headers_by_slot_sql(table_name):
-    # Список prepared-часов по конкретному часу суток.
-    #
-    # before_hour_start_ts:
-    # - если NULL, ограничение не применяется
-    # - если задан, возвращаем только часы строго раньше него
-    return f"""
-    SELECT DISTINCT
-        hour_start_ts,
-        hour_start,
-        hour_slot,
-        contract
-    FROM {table_name}
-    WHERE hour_slot = ?
-      AND (? IS NULL OR hour_start_ts < ?)
-    ORDER BY hour_start_ts
-    ;
-    """
-
-
-def select_prepared_rows_by_slot_sql(table_name):
-    # Все строки всех prepared-часов по конкретному часу суток.
+def select_prepared_rows_by_slots_sql(table_name, slot_count):
+    # Все строки всех prepared-часов по списку hour_slot.
     #
     # Это основная быстрая выборка для runtime:
-    # одним запросом читаем все исторические часы нужного slot,
+    # одним запросом читаем все исторические часы нужных slot,
     # затем группируем в Python по hour_start_ts.
     #
     # before_hour_start_ts:
     # - если NULL, ограничение не применяется
     # - если задан, возвращаем только часы строго раньше него
+    placeholders = ", ".join(["?"] * slot_count)
+
     return f"""
     SELECT
         hour_start_ts,
@@ -343,7 +325,7 @@ def select_prepared_rows_by_slot_sql(table_name):
         sum_y,
         sum_y2
     FROM {table_name}
-    WHERE hour_slot = ?
+    WHERE hour_slot IN ({placeholders})
       AND (? IS NULL OR hour_start_ts < ?)
     ORDER BY hour_start_ts, bar_index
     ;

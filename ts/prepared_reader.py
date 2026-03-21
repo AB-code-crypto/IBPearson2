@@ -1,7 +1,5 @@
 from core.db_sql import (
-    select_prepared_hour_rows_sql,
-    select_prepared_hour_headers_by_slot_sql,
-    select_prepared_rows_by_slot_sql,
+    select_prepared_rows_by_slots_sql,
 )
 
 
@@ -42,69 +40,27 @@ def build_prepared_hour_payload(rows):
     return payload
 
 
-def load_prepared_hour_rows(prepared_conn, table_name, hour_start_ts):
-    # Загружаем все строки одного prepared-часа.
-    sql = select_prepared_hour_rows_sql(table_name)
-
-    cursor = prepared_conn.execute(sql, (hour_start_ts,))
-    rows = cursor.fetchall()
-
-    return rows
-
-
-def load_prepared_hour(prepared_conn, table_name, hour_start_ts):
-    # Загружаем один prepared-час целиком и возвращаем
-    # готовую Python-структуру.
-    rows = load_prepared_hour_rows(
-        prepared_conn=prepared_conn,
-        table_name=table_name,
-        hour_start_ts=hour_start_ts,
-    )
-
-    payload = build_prepared_hour_payload(rows)
-
-    return payload
-
-
-def load_prepared_hour_headers_by_slot(prepared_conn, table_name, hour_slot, before_hour_start_ts=None):
-    # Возвращаем список заголовков prepared-часов для указанного hour_slot.
-    #
-    # before_hour_start_ts удобно использовать в runtime:
-    # например, брать только часы строго раньше текущего часа.
-    sql = select_prepared_hour_headers_by_slot_sql(table_name)
-
-    cursor = prepared_conn.execute(
-        sql,
-        (hour_slot, before_hour_start_ts, before_hour_start_ts),
-    )
-
-    rows = cursor.fetchall()
-
-    headers = []
-
-    for row in rows:
-        headers.append(
-            {
-                "hour_start_ts": row["hour_start_ts"],
-                "hour_start": row["hour_start"],
-                "hour_slot": row["hour_slot"],
-                "contract": row["contract"],
-            }
-        )
-
-    return headers
-
-
-def load_prepared_hours_by_slot(prepared_conn, table_name, hour_slot, before_hour_start_ts=None):
-    # Загружаем все prepared-часы указанного hour_slot одним SQL-запросом
+def load_prepared_hours_by_slots(prepared_conn, table_name, hour_slots, before_hour_start_ts=None):
+    # Загружаем все prepared-часы для списка hour_slot одним SQL-запросом
     # и группируем их в Python по hour_start_ts.
-    sql = select_prepared_rows_by_slot_sql(table_name)
+    #
+    # hour_slots:
+    # - список допустимых hour_slot для поиска исторических кандидатов
+    #
+    # before_hour_start_ts:
+    # - если NULL, ограничение не применяется
+    # - если задан, возвращаем только часы строго раньше него
+    if not hour_slots:
+        return []
 
-    cursor = prepared_conn.execute(
-        sql,
-        (hour_slot, before_hour_start_ts, before_hour_start_ts),
+    sql = select_prepared_rows_by_slots_sql(
+        table_name=table_name,
+        slot_count=len(hour_slots),
     )
 
+    params = [*hour_slots, before_hour_start_ts, before_hour_start_ts]
+
+    cursor = prepared_conn.execute(sql, params)
     rows = cursor.fetchall()
 
     hours = []

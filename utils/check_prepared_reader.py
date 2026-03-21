@@ -4,21 +4,19 @@ from datetime import datetime, timezone
 from config import settings_live as settings
 from contracts import Instrument
 from core.db_initializer import build_table_name
-from ts.prepared_reader import load_prepared_hours_by_slot
-
+from ts.prepared_reader import load_prepared_hours_by_slots
+from ts.ts_time import resolve_allowed_hour_slots
 
 # ============================================================
 # НАСТРОЙКИ РАЗОВОГО ЗАПУСКА
 # ============================================================
 
 INSTRUMENT_CODE = "MNQ"
-HOUR_SLOT = 18
+HOUR_SLOT = 14
 
 # Если нужно, можно ограничить только историей строго раньше этого часа.
 # Формат: "YYYY-MM-DD HH:MM:SS"
 # Если None - ограничение не применяется.
-
-# BEFORE_HOUR_START_TEXT = "2025-01-01 14:00:00"
 BEFORE_HOUR_START_TEXT = None
 
 
@@ -86,11 +84,13 @@ def main():
     )
 
     before_hour_start_ts = parse_optional_utc_hour_start_text(BEFORE_HOUR_START_TEXT)
+    allowed_hour_slots = resolve_allowed_hour_slots(HOUR_SLOT)
 
     print(f"Инструмент: {INSTRUMENT_CODE}")
     print(f"Таблица: {table_name}")
     print(f"prepared DB: {settings.prepared_db_path}")
-    print(f"HOUR_SLOT: {HOUR_SLOT}")
+    print(f"Текущий hour_slot: {HOUR_SLOT}")
+    print(f"Разрешённые hour_slot: {allowed_hour_slots}")
     print(f"BEFORE_HOUR_START_TEXT: {BEFORE_HOUR_START_TEXT}")
     print("")
 
@@ -100,10 +100,10 @@ def main():
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=5000;")
 
-        hours = load_prepared_hours_by_slot(
+        hours = load_prepared_hours_by_slots(
             prepared_conn=conn,
             table_name=table_name,
-            hour_slot=HOUR_SLOT,
+            hour_slots=allowed_hour_slots,
             before_hour_start_ts=before_hour_start_ts,
         )
 
@@ -111,7 +111,7 @@ def main():
         print("")
 
         if not hours:
-            print("По заданному hour_slot ничего не найдено.")
+            print("По заданной группе hour_slot ничего не найдено.")
             return
 
         first_hour = hours[0]
