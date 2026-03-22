@@ -21,6 +21,8 @@ from core.logger import (
     get_logger,
     log_info,
 )
+from ts.prepared_task import prepared_db_sync_task, run_prepared_sync_once
+from ts.pearson_live import PearsonLiveRuntime
 
 # Настраиваем логирование один раз при старте приложения.
 setup_logging()
@@ -42,6 +44,10 @@ async def main():
     heartbeat_task = None
     history_task = None
     realtime_task = None
+    prepared_sync_task = None
+
+    # Runtime первого шага стратегии.
+    pearson_live_runtime = None
 
     # Простое состояние разового добора последнего часа после старта realtime
     # и после последующих реконнектов.
@@ -90,15 +96,46 @@ async def main():
         # Если таска упадёт, main тоже упадёт громко.
         await history_task
 
+        # Перед запуском realtime один раз синхронизируем prepared DB.
+        # Это убирает гонку, когда live-runtime стартует раньше,
+        # чем prepared DB успеет добрать последний закрытый час.
+        await run_prepared_sync_once(
+            settings=settings,
+            instrument_code="MNQ",
+            lookback_days=31,
+        )
+
+        # Создаём live-runtime первого шага стратегии.
+        pearson_live_runtime = PearsonLiveRuntime(
+            settings=settings,
+            instrument_code="MNQ",
+        )
+
         # Потом переходим на реальные котировки.
         realtime_task = asyncio.create_task(
-            load_realtime_task(ib, ib_health, settings, active_futures, recent_backfill_state, ))
+            load_realtime_task(
+                ib=ib,
+                ib_health=ib_health,
+                settings=settings,
+                active_futures=active_futures,
+                recent_backfill_state=recent_backfill_state,
+                pearson_live_runtime=pearson_live_runtime,
+            )
+        )
 
-        # И дальше уже держим процесс живым.
-        await realtime_task
+        # После стартовой синхронизации prepared DB включаем обычную
+        # фоновую почасовую синхронизацию без повторного немедленного прохода.
+        prepared_sync_task = asyncio.create_task(
+            prepared_db_sync_task(
+                settings=settings,
+                instrument_code="MNQ",
+                lookback_days=31,
+                run_immediately=False,
+            )
+        )
 
-        # После завершения истории робот продолжает жить дальше.
-        await asyncio.Event().wait()
+        # Держим процесс живым, пока живы realtime и prepared-sync.
+        await asyncio.gather(realtime_task, prepared_sync_task)
 
     except asyncio.CancelledError:
         # Это штатный сценарий при ручной остановке робота.
@@ -106,7 +143,16 @@ async def main():
         raise
 
     finally:
-        # Если realtime ещё не завершился — отменяем.
+        # Сначала останавливаем prepared-sync.
+        if prepared_sync_task is not None and not prepared_sync_task.done():
+            prepared_sync_task.cancel()
+
+            try:
+                await prepared_sync_task
+            except asyncio.CancelledError:
+                pass
+
+        # Потом останавливаем realtime.
         if realtime_task is not None and not realtime_task.done():
             realtime_task.cancel()
 

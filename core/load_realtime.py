@@ -416,6 +416,85 @@ def maybe_start_recent_backfill_task(
     recent_backfill_state["backfill_task"] = asyncio.create_task(run_recent_backfill())
 
 
+def build_pearson_partial_bar(what_to_show, bar):
+    # Преобразуем одну сторону realtime-бара в частичный payload
+    # для pearson_live.
+    if what_to_show == "ASK":
+        return {
+            "ask_open": bar.open_,
+            "ask_close": bar.close,
+        }
+
+    if what_to_show == "BID":
+        return {
+            "bid_open": bar.open_,
+            "bid_close": bar.close,
+        }
+
+    raise ValueError(f"Неподдерживаемый realtime stream: {what_to_show}")
+
+
+def maybe_feed_pearson_live(
+        pearson_live_runtime,
+        pearson_live_state,
+        instrument_code,
+        what_to_show,
+        bar,
+):
+    # Кормим pearson_live только уже полностью собранным 5-секундным баром,
+    # где есть и BID, и ASK.
+    if pearson_live_runtime is None:
+        return
+
+    if instrument_code != pearson_live_runtime.instrument_code:
+        return
+
+    bar_time_ts = int(bar.time.astimezone(timezone.utc).timestamp())
+    last_emitted_bar_time_ts = pearson_live_state["last_emitted_bar_time_ts"]
+
+    if (
+            last_emitted_bar_time_ts is not None
+            and bar_time_ts <= last_emitted_bar_time_ts
+    ):
+        return
+
+    pending_bars = pearson_live_state["pending_bars"]
+
+    if bar_time_ts not in pending_bars:
+        pending_bars[bar_time_ts] = {
+            "bar_time_ts": bar_time_ts,
+        }
+
+    pending_bars[bar_time_ts].update(
+        build_pearson_partial_bar(
+            what_to_show=what_to_show,
+            bar=bar,
+        )
+    )
+
+    pending_bar = pending_bars[bar_time_ts]
+
+    if (
+            "ask_open" not in pending_bar
+            or "bid_open" not in pending_bar
+            or "ask_close" not in pending_bar
+            or "bid_close" not in pending_bar
+    ):
+        return
+
+    pearson_live_runtime.on_closed_bar(pending_bar)
+    pearson_live_state["last_emitted_bar_time_ts"] = bar_time_ts
+
+    del pending_bars[bar_time_ts]
+
+    stale_bar_time_ts_list = [
+        ts for ts in pending_bars
+        if ts <= bar_time_ts
+    ]
+    for stale_bar_time_ts in stale_bar_time_ts_list:
+        del pending_bars[stale_bar_time_ts]
+
+
 def build_realtime_update_handler(
         ib,
         ib_health,
@@ -423,6 +502,8 @@ def build_realtime_update_handler(
         instrument_code,
         contract_local_symbol,
         recent_backfill_state,
+        pearson_live_runtime,
+        pearson_live_state,
         contract,
         what_to_show,
         conn,
@@ -477,15 +558,31 @@ def build_realtime_update_handler(
             bar_time_ts=bar_time_ts,
         )
 
+        maybe_feed_pearson_live(
+            pearson_live_runtime=pearson_live_runtime,
+            pearson_live_state=pearson_live_state,
+            instrument_code=instrument_code,
+            what_to_show=what_to_show,
+            bar=bar,
+        )
+
     return on_bar_update
 
 
-async def load_realtime_task(ib, ib_health, settings, active_futures, recent_backfill_state):
+async def load_realtime_task(
+        ib,
+        ib_health,
+        settings,
+        active_futures,
+        recent_backfill_state,
+        pearson_live_runtime=None,
+):
     # Текущая realtime-версия loader-а:
     # - берём один активный контракт из ACTIVE_FUTURES;
     # - открываем отдельные подписки на BID и ASK 5-second bars;
     # - пишем новые бары в SQLite в таблицу вида MNQ_5s;
     # - BID и ASK пишем независимо по мере их прихода;
+    # - для pearson_live собираем полноценный бар только когда пришли обе стороны;
     # - никакой переподписки и логики ролловера здесь нет.
     instrument_code, contract_local_symbol = get_realtime_active_future(active_futures)
 
@@ -501,6 +598,11 @@ async def load_realtime_task(ib, ib_health, settings, active_futures, recent_bac
     table_name = build_table_name(instrument_code, instrument_row["barSizeSetting"])
     db_path = settings.price_db_path
     db_conn = None
+
+    pearson_live_state = {
+        "pending_bars": {},
+        "last_emitted_bar_time_ts": None,
+    }
 
     # Храним все открытые подписки и их обработчики,
     # чтобы в finally корректно всё снять и отменить.
@@ -545,6 +647,8 @@ async def load_realtime_task(ib, ib_health, settings, active_futures, recent_bac
                 instrument_code=instrument_code,
                 contract_local_symbol=contract_local_symbol,
                 recent_backfill_state=recent_backfill_state,
+                pearson_live_runtime=pearson_live_runtime,
+                pearson_live_state=pearson_live_state,
                 contract=contract,
                 what_to_show=what_to_show,
                 conn=db_conn,
