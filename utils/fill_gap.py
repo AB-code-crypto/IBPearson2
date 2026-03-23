@@ -1,3 +1,7 @@
+'''
+скрипт для ручной разовой докачки одного конкретного часового интервала по выбранному контракту. Делает отдельные исторические запросы BID и ASK, собирает
+из них quote-строки и пишет результат в price DB через UPSERT.
+'''
 import asyncio
 import sqlite3
 from datetime import datetime, timedelta, timezone

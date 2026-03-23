@@ -1,3 +1,6 @@
+'''
+Получить текущее время и сказать какое оно - рабочее или нет, учитывая праздники, выходные, лето/зима и т.д.
+'''
 from dataclasses import dataclass, asdict
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo

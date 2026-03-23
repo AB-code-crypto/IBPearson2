@@ -1,3 +1,6 @@
+'''
+Получаем исторические бары. Нужно иногда для проверки
+'''
 from datetime import datetime, timedelta, timezone
 from ib_async import IB, Contract
 

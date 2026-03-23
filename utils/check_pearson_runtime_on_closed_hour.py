@@ -1,3 +1,8 @@
+'''
+ исследовательский скрипт для прогона уже закрытого исторического часа как будто в realtime. Накапливает текущий час бар за баром, запускает Пирсона после
+ заданного порога, строит ranking кандидатов, отбирает совпавшие по корреляции и печатает диагностические блоки: что было дальше у кандидатов,
+ агрегаты по группе, предварительное направление и score качества сигнала.
+'''
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from statistics import median
@@ -21,7 +26,7 @@ from ts.ts_time import resolve_allowed_hour_slots
 INSTRUMENT_CODE = "MNQ"
 
 # Исторический уже закрытый час, который хотим прогнать как будто в realtime.
-CURRENT_HOUR_START_TEXT = "2026-03-18 16:00:00"
+CURRENT_HOUR_START_TEXT = "2026-03-23 11:00:00"
 
 # После 360 баров (30 минут) начинаем сравнение.
 MIN_BARS_TO_START = 360
@@ -35,7 +40,7 @@ STOP_AFTER_BAR_INDEX = None
 
 # Как только не меньше REQUIRED_MATCH_COUNT кандидатов из TOP_N
 # достигли REQUIRED_CORRELATION, считаем, что найден рабочий сигнал.
-REQUIRED_CORRELATION = 0.8
+REQUIRED_CORRELATION = 0.9
 REQUIRED_MATCH_COUNT = 6
 
 # Минимально допустимое число исторических prepared-кандидатов.

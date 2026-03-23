@@ -1,3 +1,7 @@
+'''
+ручной скрипт для массового заполнения prepared DB по заданному диапазону часов. Работает через общий sync-механизм: ищет candidate-часы в price DB, вставляет
+только отсутствующие prepared-часы, пропускает уже существующие и отдельно считает невалидные часы.
+'''
 from datetime import datetime, timezone
 
 from config import settings_live as settings

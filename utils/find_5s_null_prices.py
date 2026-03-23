@@ -1,3 +1,7 @@
+'''
+скрипт для поиска свечей в price DB, у которых отсутствует хотя бы одна из 8 цен (ask_* и bid_*). Проходит по всей таблице, выводит timestamp каждой
+проблемной свечи и список конкретных полей, где найден NULL.
+'''
 import sqlite3
 from datetime import datetime, timezone
 from config import settings_live as settings

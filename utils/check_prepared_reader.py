@@ -1,3 +1,7 @@
+'''
+диагностический скрипт для проверки чтения prepared DB. Загружает prepared-часы по группе hour_slot через load_prepared_hours_by_slots, при необходимости
+ограничивает историю часами строго раньше заданного момента и печатает краткую сводку по первому и последнему найденному prepared-часу.
+'''
 import sqlite3
 from datetime import datetime, timezone
 

@@ -1,9 +1,11 @@
+'''
+Получаем conID у указанного фьючерса
+'''
 import asyncio
 import json
 import sys
 
 from ib_async import IB, Contract
-
 
 # =========================
 # НАСТРОЙКИ

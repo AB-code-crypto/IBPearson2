@@ -1,3 +1,8 @@
+'''
+ручной скрипт для пересборки одного конкретного исторического часа в prepared DB. Берёт выбранный час из price DB, строит prepared-строки через
+build_prepared_rows_for_one_hour, затем полностью заменяет этот час в prepared DB и печатает краткую проверку результата.
+'''
+
 import sqlite3
 from datetime import datetime, timezone
 
