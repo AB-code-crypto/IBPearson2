@@ -1,16 +1,19 @@
 """
-Очень простой оффлайн-тестер первого шага стратегии.
+Простой оффлайн-тестер первого шага стратегии с CT-логикой.
 
 Логика:
-1. Берём тестовый диапазон часов [TEST_START_HOUR_TEXT, TEST_END_HOUR_TEXT).
-2. Для поиска historical candidates используем только prepared-данные
-   строго раньше TEST_START_HOUR_TEXT.
-3. Для каждого тестового часа прогоняем его бар за баром как будто в realtime.
+1. Берём тестовый диапазон часов [TEST_START_HOUR_TEXT_UTC, TEST_END_HOUR_TEXT_UTC).
+2. Для каждого тестового часа:
+   - определяем его CT-час по bar_time_ts_ct первого бара;
+   - через resolve_allowed_hour_slots(...) получаем допустимые CT-slot;
+   - берём из prepared DB все historical candidates этих CT-slot
+     строго раньше текущего тестового часа по CT-оси.
+3. Идём по текущему часу бар за баром как будто в realtime.
 4. В окне 30..50 минут ищем TOP_N кандидатов.
 5. Если не меньше REQUIRED_MATCH_COUNT кандидатов из TOP_N имеют
-   корреляцию >= REQUIRED_CORRELATION, строим средний future-path
-   по этим matched-кандидатам.
-6. Если средний future-path до конца часа > 0, входим LONG.
+   correlation >= REQUIRED_CORRELATION, строим средний future-path
+   по matched-кандидатам.
+6. Если средний future-path к концу часа > 0, входим LONG.
    Если < 0, входим SHORT.
 7. Входим один раз на час, по первому найденному сигналу.
 8. Выходим за 10 секунд до конца часа.
@@ -26,6 +29,7 @@
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+from math import sqrt
 from statistics import median
 
 from config import settings_live as settings
@@ -33,10 +37,8 @@ from contracts import Instrument
 from core.db_initializer import build_table_name
 from ts.prepared_builder import load_price_rows_for_one_hour, validate_price_rows
 from ts.prepared_reader import load_prepared_hours_by_slots
-from ts.pearson_runtime import PearsonCurrentHour
 from ts.ts_config import pearson_eval_start_bar_count, pearson_eval_end_bar_count_exclusive
 from ts.ts_time import resolve_allowed_hour_slots
-
 
 # ============================================================
 # НАСТРОЙКИ РАЗОВОГО ЗАПУСКА
@@ -44,13 +46,13 @@ from ts.ts_time import resolve_allowed_hour_slots
 
 INSTRUMENT_CODE = "MNQ"
 
-# Тестируем часы в диапазоне [start, end).
-TEST_START_HOUR_TEXT = "2026-01-01 00:00:00"
-TEST_END_HOUR_TEXT = "2026-03-23 00:00:00"
+# Тестируем часы в диапазоне [start, end) по UTC-ключу price DB.
+TEST_START_HOUR_TEXT_UTC = "2026-01-01 00:00:00"
+TEST_END_HOUR_TEXT_UTC = "2026-03-23 00:00:00"
 
 # Для отбора сигнала.
 TOP_N = 10
-REQUIRED_CORRELATION = 0.90
+REQUIRED_CORRELATION = 0.80
 REQUIRED_MATCH_COUNT = 6
 MIN_HISTORY_CANDIDATES = 30
 
@@ -68,31 +70,30 @@ PRINT_TRADES = True
 MNQ_POINT_VALUE_USD = float(Instrument[INSTRUMENT_CODE]["multiplier"])
 
 # Комиссия на 1 сторону сделки для 1 контракта в USD.
-#
-# Важно:
-# сюда лучше поставить ваш фактический all-in расход на сторону
-# (комиссия брокера + exchange + clearing + regulatory).
-#
-# Если пока хотите сначала посмотреть только gross-результат без комиссий,
-# оставьте 0.0.
 COMMISSION_PER_SIDE_USD = 0.62
 
 
 @dataclass
 class TradeResult:
     hour_start_ts: int
-    hour_start: str
-    hour_slot: int
+    hour_start_utc: str
+    hour_start_ts_ct: int
+    hour_start_ct: str
+    hour_slot_ct: int
 
     entry_bar_index: int
-    entry_bar_time: str
-    entry_bar_close_time: str
+    entry_bar_time_utc: str
+    entry_bar_close_time_utc: str
+    entry_bar_time_ct: str
+    entry_bar_close_time_ct: str
     entry_direction: str
     entry_price: float
 
     exit_bar_index: int
-    exit_bar_time: str
-    exit_bar_close_time: str
+    exit_bar_time_utc: str
+    exit_bar_close_time_utc: str
+    exit_bar_time_ct: str
+    exit_bar_close_time_ct: str
     exit_price: float
 
     matched_count: int
@@ -118,6 +119,7 @@ class TesterStats:
     win_trades: int
     loss_trades: int
     flat_trades: int
+
     total_points: float
     avg_points: float
     median_points: float
@@ -133,6 +135,188 @@ class TesterStats:
     worst_trade_net_usd: float | None
 
 
+class SimplePearsonCandidate:
+    def __init__(self, prepared_hour_payload):
+        self.hour_start_ts = prepared_hour_payload["hour_start_ts"]
+        self.hour_start_ts_ct = prepared_hour_payload["hour_start_ts_ct"]
+        self.hour_start_ct = prepared_hour_payload["hour_start_ct"]
+        self.hour_slot_ct = prepared_hour_payload["hour_slot_ct"]
+        self.contract = prepared_hour_payload["contract"]
+
+        self.y = prepared_hour_payload["y"]
+        self.sum_y = prepared_hour_payload["sum_y"]
+        self.sum_y2 = prepared_hour_payload["sum_y2"]
+
+        self.sum_xy = 0.0
+        self.last_correlation = None
+
+    def initialize_sum_xy(self, current_x):
+        self.sum_xy = 0.0
+
+        for bar_index, x_value in enumerate(current_x):
+            self.sum_xy += x_value * self.y[bar_index]
+
+    def update_sum_xy_for_last_bar(self, x_value, bar_index):
+        self.sum_xy += x_value * self.y[bar_index]
+
+    def calculate_correlation(self, current_sum_x, current_sum_x2, current_n, current_bar_index):
+        sum_y = self.sum_y[current_bar_index]
+        sum_y2 = self.sum_y2[current_bar_index]
+
+        numerator = (current_n * self.sum_xy) - (current_sum_x * sum_y)
+
+        left = (current_n * current_sum_x2) - (current_sum_x * current_sum_x)
+        right = (current_n * sum_y2) - (sum_y * sum_y)
+
+        if left <= 0.0:
+            self.last_correlation = None
+            return None
+
+        if right <= 0.0:
+            self.last_correlation = None
+            return None
+
+        denominator = sqrt(left * right)
+
+        if denominator == 0.0:
+            self.last_correlation = None
+            return None
+
+        correlation = numerator / denominator
+        self.last_correlation = correlation
+        return correlation
+
+
+class SimplePearsonCurrentHour:
+    def __init__(self, hour_start_ts, hour_start_ts_ct, hour_start_ct):
+        self.hour_start_ts = hour_start_ts
+        self.hour_start_utc = hour_start_text_from_ts(hour_start_ts)
+
+        self.hour_start_ts_ct = hour_start_ts_ct
+        self.hour_start_ct = hour_start_ct
+        self.hour_slot_ct = (hour_start_ts_ct // 3600) % 24
+
+        self.mid_open_0 = None
+
+        self.x = []
+        self.sum_x = 0.0
+        self.sum_x2 = 0.0
+
+        self.candidates = []
+        self.candidates_initialized = False
+
+    def current_bar_index(self):
+        if not self.x:
+            return None
+
+        return len(self.x) - 1
+
+    def current_n(self):
+        return len(self.x)
+
+    def add_bar(self, ask_open, bid_open, ask_close, bid_close):
+        if self.mid_open_0 is None:
+            self.mid_open_0 = (ask_open + bid_open) / 2.0
+
+            if self.mid_open_0 == 0.0:
+                raise ValueError("mid_open_0 == 0, деление невозможно")
+
+        mid_close = (ask_close + bid_close) / 2.0
+        x_value = (mid_close / self.mid_open_0) - 1.0
+
+        self.x.append(x_value)
+        self.sum_x += x_value
+        self.sum_x2 += x_value * x_value
+
+        return x_value
+
+    def set_candidates(self, prepared_hours):
+        self.candidates = []
+
+        for prepared_hour_payload in prepared_hours:
+            self.candidates.append(SimplePearsonCandidate(prepared_hour_payload))
+
+        self.candidates_initialized = False
+
+    def initialize_candidates(self):
+        if not self.x:
+            raise ValueError("Нельзя инициализировать кандидатов: текущий x пустой")
+
+        for candidate in self.candidates:
+            candidate.initialize_sum_xy(self.x)
+
+        self.candidates_initialized = True
+
+    def update_candidates_for_last_bar(self):
+        if not self.candidates_initialized:
+            raise ValueError("Кандидаты ещё не инициализированы")
+
+        if not self.x:
+            raise ValueError("Текущий x пустой")
+
+        last_bar_index = len(self.x) - 1
+        last_x_value = self.x[last_bar_index]
+
+        for candidate in self.candidates:
+            candidate.update_sum_xy_for_last_bar(
+                x_value=last_x_value,
+                bar_index=last_bar_index,
+            )
+
+    def calculate_all_correlations(self):
+        if not self.x:
+            return []
+
+        current_bar_index = len(self.x) - 1
+        current_n = len(self.x)
+
+        result = []
+
+        for candidate in self.candidates:
+            correlation = candidate.calculate_correlation(
+                current_sum_x=self.sum_x,
+                current_sum_x2=self.sum_x2,
+                current_n=current_n,
+                current_bar_index=current_bar_index,
+            )
+
+            result.append(
+                {
+                    "hour_start_ts": candidate.hour_start_ts,
+                    "hour_start_ts_ct": candidate.hour_start_ts_ct,
+                    "hour_start_ct": candidate.hour_start_ct,
+                    "hour_slot_ct": candidate.hour_slot_ct,
+                    "contract": candidate.contract,
+                    "correlation": correlation,
+                }
+            )
+
+        return result
+
+    def get_ranked_candidates(self, min_correlation=None, top_n=None):
+        correlations = self.calculate_all_correlations()
+
+        filtered = []
+
+        for item in correlations:
+            correlation = item["correlation"]
+
+            if correlation is None:
+                continue
+
+            if min_correlation is not None and correlation < min_correlation:
+                continue
+
+            filtered.append(item)
+
+        filtered.sort(key=lambda item: item["correlation"], reverse=True)
+
+        if top_n is not None:
+            filtered = filtered[:top_n]
+
+        return filtered
+
+
 def parse_utc_hour_start_text(hour_start_text):
     dt = datetime.strptime(hour_start_text, "%Y-%m-%d %H:%M:%S")
     dt = dt.replace(tzinfo=timezone.utc)
@@ -145,8 +329,17 @@ def parse_utc_hour_start_text(hour_start_text):
     return int(dt.timestamp())
 
 
+def floor_to_hour_ts(ts):
+    return (ts // 3600) * 3600
+
+
 def hour_start_text_from_ts(hour_start_ts):
     return datetime.fromtimestamp(hour_start_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_ct_axis_ts(ts_ct):
+    # ts_ct - это локальная числовая CT-ось проекта.
+    return datetime.fromtimestamp(ts_ct, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def get_bar_close_time_text(bar_start_time_text):
@@ -161,12 +354,10 @@ def get_mid_close(row):
 
 
 def points_to_usd(points_result):
-    # Для MNQ 1 пункт = 2 USD на 1 контракт.
     return points_result * MNQ_POINT_VALUE_USD
 
 
 def get_round_turn_commissions_usd():
-    # Вход + выход для одного контракта.
     return COMMISSION_PER_SIDE_USD * 2.0
 
 
@@ -190,8 +381,6 @@ def get_candidates_above_correlation(ranked_candidates, required_correlation):
 
 
 def build_average_future_path(matched_candidates, prepared_hours_map, current_bar_index):
-    # Строим средний future-path matched-кандидатов
-    # относительно точки сигнала.
     if not matched_candidates:
         return []
 
@@ -241,7 +430,6 @@ def build_average_future_path(matched_candidates, prepared_hours_map, current_ba
 
 
 def build_trade_direction_from_average_future_path(avg_future_path):
-    # Простое решение: смотрим, куда в среднем приходит путь к концу часа.
     if not avg_future_path:
         return None, 0.0
 
@@ -257,13 +445,6 @@ def build_trade_direction_from_average_future_path(avg_future_path):
 
 
 def get_exit_bar_index():
-    # Нужно выйти за 10 секунд до конца часа.
-    #
-    # Час заканчивается в hh:00:00 следующего часа.
-    # Выход в hh:59:50 означает закрытие бара,
-    # который стартовал в hh:59:45.
-    #
-    # bar_index = 717
     close_time_seconds = 3600 - EXIT_CLOSE_OFFSET_SECONDS
     bar_start_seconds = close_time_seconds - 5
 
@@ -290,23 +471,31 @@ def load_test_hour_starts(price_conn, table_name, test_start_ts, test_end_ts):
     return [row[0] for row in rows]
 
 
-def load_history_candidates_with_cache(prepared_conn, table_name, cache, current_hour_slot, history_end_ts):
-    allowed_hour_slots = resolve_allowed_hour_slots(current_hour_slot)
-    cache_key = tuple(sorted(allowed_hour_slots))
+def load_history_candidates_with_cache(prepared_conn, table_name, cache, current_hour_slot_ct, current_hour_start_ts_ct):
+    allowed_hour_slots_ct = resolve_allowed_hour_slots(current_hour_slot_ct)
+    cache_key = tuple(allowed_hour_slots_ct)
 
     if cache_key not in cache:
-        prepared_hours = load_prepared_hours_by_slots(
+        all_group_hours = load_prepared_hours_by_slots(
             prepared_conn=prepared_conn,
             table_name=table_name,
-            hour_slots=allowed_hour_slots,
-            before_hour_start_ts=history_end_ts,
+            hour_slots_ct=allowed_hour_slots_ct,
+            before_hour_start_ts_ct=None,
         )
-        cache[cache_key] = prepared_hours
+        cache[cache_key] = all_group_hours
 
-    return cache[cache_key], allowed_hour_slots
+    group_hours = cache[cache_key]
+
+    filtered_hours = []
+
+    for item in group_hours:
+        if item["hour_start_ts_ct"] < current_hour_start_ts_ct:
+            filtered_hours.append(item)
+
+    return filtered_hours, allowed_hour_slots_ct
 
 
-def run_one_test_hour(price_conn, prepared_conn, table_name, hour_start_ts, history_end_ts, candidate_cache):
+def run_one_test_hour(price_conn, prepared_conn, table_name, hour_start_ts, candidate_cache):
     rows = load_price_rows_for_one_hour(
         price_conn=price_conn,
         table_name=table_name,
@@ -315,21 +504,32 @@ def run_one_test_hour(price_conn, prepared_conn, table_name, hour_start_ts, hist
 
     validate_price_rows(rows=rows, hour_start_ts=hour_start_ts)
 
-    current_hour = PearsonCurrentHour(hour_start_ts)
+    if not rows:
+        raise ValueError("Тестовый час пустой")
 
-    prepared_hours, allowed_hour_slots = load_history_candidates_with_cache(
+    current_hour_start_ts_ct = floor_to_hour_ts(rows[0]["bar_time_ts_ct"])
+    current_hour_start_ct = format_ct_axis_ts(current_hour_start_ts_ct)
+
+    current_hour = SimplePearsonCurrentHour(
+        hour_start_ts=hour_start_ts,
+        hour_start_ts_ct=current_hour_start_ts_ct,
+        hour_start_ct=current_hour_start_ct,
+    )
+
+    prepared_hours, allowed_hour_slots_ct = load_history_candidates_with_cache(
         prepared_conn=prepared_conn,
         table_name=table_name,
         cache=candidate_cache,
-        current_hour_slot=current_hour.hour_slot,
-        history_end_ts=history_end_ts,
+        current_hour_slot_ct=current_hour.hour_slot_ct,
+        current_hour_start_ts_ct=current_hour_start_ts_ct,
     )
 
     if len(prepared_hours) < MIN_HISTORY_CANDIDATES:
         return {
             "status": "small_history",
             "history_candidate_count": len(prepared_hours),
-            "allowed_hour_slots": allowed_hour_slots,
+            "allowed_hour_slots_ct": allowed_hour_slots_ct,
+            "hour_start_ct": current_hour.hour_start_ct,
         }
 
     prepared_hours_map = build_prepared_hours_map(prepared_hours)
@@ -338,7 +538,7 @@ def run_one_test_hour(price_conn, prepared_conn, table_name, hour_start_ts, hist
     exit_bar_index = get_exit_bar_index()
 
     for row in rows:
-        x_value = current_hour.add_bar(
+        current_hour.add_bar(
             ask_open=row["ask_open"],
             bid_open=row["bid_open"],
             ask_close=row["ask_close"],
@@ -404,16 +604,22 @@ def run_one_test_hour(price_conn, prepared_conn, table_name, hour_start_ts, hist
             "status": "trade",
             "trade": TradeResult(
                 hour_start_ts=hour_start_ts,
-                hour_start=hour_start_text_from_ts(hour_start_ts),
-                hour_slot=current_hour.hour_slot,
+                hour_start_utc=hour_start_text_from_ts(hour_start_ts),
+                hour_start_ts_ct=current_hour.hour_start_ts_ct,
+                hour_start_ct=current_hour.hour_start_ct,
+                hour_slot_ct=current_hour.hour_slot_ct,
                 entry_bar_index=current_bar_index,
-                entry_bar_time=row["bar_time"],
-                entry_bar_close_time=get_bar_close_time_text(row["bar_time"]),
+                entry_bar_time_utc=row["bar_time"],
+                entry_bar_close_time_utc=get_bar_close_time_text(row["bar_time"]),
+                entry_bar_time_ct=row["bar_time_ct"],
+                entry_bar_close_time_ct=get_bar_close_time_text(row["bar_time_ct"]),
                 entry_direction=direction,
                 entry_price=entry_price,
                 exit_bar_index=exit_bar_index,
-                exit_bar_time=exit_row["bar_time"],
-                exit_bar_close_time=get_bar_close_time_text(exit_row["bar_time"]),
+                exit_bar_time_utc=exit_row["bar_time"],
+                exit_bar_close_time_utc=get_bar_close_time_text(exit_row["bar_time"]),
+                exit_bar_time_ct=exit_row["bar_time_ct"],
+                exit_bar_close_time_ct=get_bar_close_time_text(exit_row["bar_time_ct"]),
                 exit_price=exit_price,
                 matched_count=len(matched_candidates),
                 best_correlation=best_correlation,
@@ -427,6 +633,7 @@ def run_one_test_hour(price_conn, prepared_conn, table_name, hour_start_ts, hist
 
     return {
         "status": "no_signal",
+        "hour_start_ct": current_hour.hour_start_ct,
     }
 
 
@@ -517,10 +724,13 @@ def build_tester_stats(results):
 
 def print_trade(trade):
     print(
-        f"{trade.hour_start} | "
+        f"{trade.hour_start_utc} UTC | {trade.hour_start_ct} CT | "
+        f"slot_ct={trade.hour_slot_ct} | "
         f"{trade.entry_direction:<5} | "
-        f"вход={trade.entry_bar_close_time} (bar_index={trade.entry_bar_index}) | "
-        f"выход={trade.exit_bar_close_time} (bar_index={trade.exit_bar_index}) | "
+        f"вход={trade.entry_bar_close_time_utc} UTC / {trade.entry_bar_close_time_ct} CT "
+        f"(bar_index={trade.entry_bar_index}) | "
+        f"выход={trade.exit_bar_close_time_utc} UTC / {trade.exit_bar_close_time_ct} CT "
+        f"(bar_index={trade.exit_bar_index}) | "
         f"matched={trade.matched_count} | "
         f"best_corr={trade.best_correlation:.6f} | "
         f"avg_future_to_end={trade.avg_future_to_end * 100:+.4f}% | "
@@ -574,11 +784,11 @@ def main():
         bar_size_setting=instrument_row["barSizeSetting"],
     )
 
-    test_start_ts = parse_utc_hour_start_text(TEST_START_HOUR_TEXT)
-    test_end_ts = parse_utc_hour_start_text(TEST_END_HOUR_TEXT)
+    test_start_ts = parse_utc_hour_start_text(TEST_START_HOUR_TEXT_UTC)
+    test_end_ts = parse_utc_hour_start_text(TEST_END_HOUR_TEXT_UTC)
 
     if test_end_ts <= test_start_ts:
-        raise ValueError("TEST_END_HOUR_TEXT должен быть строго позже TEST_START_HOUR_TEXT")
+        raise ValueError("TEST_END_HOUR_TEXT_UTC должен быть строго позже TEST_START_HOUR_TEXT_UTC")
 
     price_conn = sqlite3.connect(settings.price_db_path)
     prepared_conn = sqlite3.connect(settings.prepared_db_path)
@@ -598,7 +808,8 @@ def main():
         )
 
         print(f"Тестируем часов: {len(test_hour_starts)}")
-        print(f"История для поиска кандидатов: строго раньше {TEST_START_HOUR_TEXT} UTC")
+        print(f"Тестовый диапазон: {TEST_START_HOUR_TEXT_UTC} -> {TEST_END_HOUR_TEXT_UTC} UTC")
+        print("Поиск кандидатов: вся доступная prepared-история строго раньше текущего тестового часа по CT-оси")
         print(f"Входное окно: [{ENTRY_START_BAR_COUNT} .. {ENTRY_END_BAR_COUNT_EXCLUSIVE}) баров")
         print(f"Выход: bar_index={get_exit_bar_index()} (за {EXIT_CLOSE_OFFSET_SECONDS} секунд до конца часа)")
         print(f"MNQ point value: {MNQ_POINT_VALUE_USD:.2f} USD за 1 пункт")
@@ -618,17 +829,16 @@ def main():
                     prepared_conn=prepared_conn,
                     table_name=table_name,
                     hour_start_ts=hour_start_ts,
-                    history_end_ts=test_start_ts,
                     candidate_cache=candidate_cache,
                 )
             except ValueError as exc:
                 result = {
                     "status": "invalid_hour",
                     "hour_start_ts": hour_start_ts,
-                    "hour_start": hour_start_text,
+                    "hour_start_utc": hour_start_text,
                     "error": str(exc),
                 }
-                print(f"SKIP INVALID HOUR: {hour_start_text} | {exc}")
+                print(f"SKIP INVALID HOUR: {hour_start_text} UTC | {exc}")
 
             results.append(result)
 
