@@ -35,7 +35,7 @@ from ts.ts_time import resolve_allowed_hour_slots
 INSTRUMENT_CODE = "MNQ"
 
 # Исторический уже закрытый час, который хотим прогнать как будто в realtime.
-CURRENT_HOUR_START_TEXT = "2026-03-23 11:00:00"
+CURRENT_HOUR_START_TEXT = "2026-03-19 18:00:00"
 
 # После 360 баров (30 минут) начинаем сравнение.
 MIN_BARS_TO_START = 360
@@ -49,7 +49,7 @@ TOP_N = 10
 PLOT_CANDIDATES_COUNT = 5
 
 # Куда сохранять PNG-файл.
-OUTPUT_DIR = Path(".")
+OUTPUT_DIR = Path("./png/")
 
 # Если None - идём до конца часа.
 STOP_AFTER_BAR_INDEX = None
