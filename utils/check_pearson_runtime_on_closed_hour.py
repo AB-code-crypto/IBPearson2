@@ -569,6 +569,7 @@ def print_signal_found(
         matched_candidates,
         current_bar_index,
         current_bar_start_time_text,
+        current_bar_start_time_text_ct,
         required_correlation,
         required_match_count,
         prepared_hours_map,
