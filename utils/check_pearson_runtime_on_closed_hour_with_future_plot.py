@@ -27,6 +27,7 @@ from ts.prepared_reader import load_prepared_hours_by_slots
 from ts.pearson_runtime import PearsonCurrentHour
 from ts.ts_time import resolve_allowed_hour_slots
 
+
 # ============================================================
 # НАСТРОЙКИ РАЗОВОГО ЗАПУСКА
 # ============================================================
@@ -34,29 +35,29 @@ from ts.ts_time import resolve_allowed_hour_slots
 INSTRUMENT_CODE = "MNQ"
 
 # Исторический уже закрытый час, который хотим прогнать как будто в realtime.
-CURRENT_HOUR_START_TEXT = "2026-03-19 18:00:00"
+CURRENT_HOUR_START_TEXT = "2026-03-23 11:00:00"
 
 # После 360 баров (30 минут) начинаем сравнение.
 MIN_BARS_TO_START = 360
 
 # Сколько лучших кандидатов печатать в момент сигнала
 # или в лучшем достигнутом результате, если сигнала не было.
-TOP_N = 5
+TOP_N = 10
 
 # Сколько кандидатов рисовать на PNG-графике.
 # Берём первых кандидатов из уже построенного ranking.
 PLOT_CANDIDATES_COUNT = 5
 
 # Куда сохранять PNG-файл.
-OUTPUT_DIR = Path("./png/")
+OUTPUT_DIR = Path(".")
 
 # Если None - идём до конца часа.
 STOP_AFTER_BAR_INDEX = None
 
 # Как только не меньше REQUIRED_MATCH_COUNT кандидатов из TOP_N
 # достигли REQUIRED_CORRELATION, считаем, что найден рабочий сигнал.
-REQUIRED_CORRELATION = 0.8
-REQUIRED_MATCH_COUNT = 1
+REQUIRED_CORRELATION = 0.9
+REQUIRED_MATCH_COUNT = 6
 
 # Минимально допустимое число исторических prepared-кандидатов.
 MIN_HISTORY_CANDIDATES = 100
@@ -294,9 +295,9 @@ def build_signal_quality_score(aggregate, direction_decision):
     risk_reward_score = min(max(edge, 0.0) / 0.0020, 1.0)
 
     score = (
-            consensus_score * 40.0 +
-            move_score * 35.0 +
-            risk_reward_score * 25.0
+        consensus_score * 40.0 +
+        move_score * 35.0 +
+        risk_reward_score * 25.0
     )
 
     if score >= 80.0:
@@ -473,20 +474,84 @@ def build_plot_file_path(current_hour_start_text, bar_index, plot_kind):
     return OUTPUT_DIR / file_name
 
 
+def build_rebased_future_path(candidate_y, current_full_y, current_bar_index):
+    # Строим future-path кандидата, приведённый к уровню текущего часа
+    # в точке сигнала.
+    #
+    # Идея:
+    # - у кандидата берём движение после current_bar_index относительно
+    #   его собственного уровня в этой точке;
+    # - затем накладываем это относительное продолжение на фактический
+    #   уровень текущего часа в той же точке.
+    #
+    # Так можно на одном графике визуально сравнивать:
+    # - что реально произошло дальше у текущего часа;
+    # - что прогнозировали найденные похожие кандидаты.
+    current_signal_rel = 1.0 + current_full_y[current_bar_index]
+    candidate_signal_rel = 1.0 + candidate_y[current_bar_index]
+
+    rebased_path = []
+
+    for idx in range(current_bar_index, len(candidate_y)):
+        candidate_rel_from_signal = ((1.0 + candidate_y[idx]) / candidate_signal_rel) - 1.0
+        rebased_rel = (current_signal_rel * (1.0 + candidate_rel_from_signal)) - 1.0
+        rebased_path.append(rebased_rel)
+
+    return rebased_path
+
+
+def build_median_projected_future_path(
+    candidates_to_plot,
+    prepared_hours_map,
+    current_full_y,
+    current_bar_index,
+):
+    # Строим агрегированный медианный future-path по выбранным кандидатам,
+    # уже приведённый к уровню текущего часа в точке сигнала.
+    if not candidates_to_plot:
+        return None
+
+    projected_paths = []
+
+    for item in candidates_to_plot:
+        candidate_payload = prepared_hours_map[item["hour_start_ts"]]
+        projected_path = build_rebased_future_path(
+            candidate_y=candidate_payload["y"],
+            current_full_y=current_full_y,
+            current_bar_index=current_bar_index,
+        )
+        projected_paths.append(projected_path)
+
+    if not projected_paths:
+        return None
+
+    median_path = []
+    path_len = len(projected_paths[0])
+
+    for idx in range(path_len):
+        values = [path[idx] for path in projected_paths]
+        median_path.append(median(values))
+
+    return median_path
+
+
 def save_candidates_plot(
-        current_hour_start_text,
-        current_full_y,
-        ranked_candidates,
-        prepared_hours_map,
-        current_bar_index,
-        required_correlation,
-        plot_candidates_count,
-        output_path,
+    current_hour_start_text,
+    current_full_y,
+    ranked_candidates,
+    prepared_hours_map,
+    current_bar_index,
+    required_correlation,
+    plot_candidates_count,
+    output_path,
 ):
     # Сохраняем PNG-график:
     # - весь рассматриваемый текущий час;
     # - несколько лучших найденных кандидатов;
-    # - вертикальная линия в точке сигнала / лучшего снимка.
+    # - вертикальная линия в точке сигнала / лучшего снимка;
+    # - реальное продолжение текущего часа после сигнала;
+    # - медианный прогнозный future-path по найденным кандидатам,
+    #   приведённый к той же стартовой точке.
     candidates_to_plot = ranked_candidates[:plot_candidates_count]
 
     if not candidates_to_plot:
@@ -498,12 +563,24 @@ def save_candidates_plot(
     x_values = list(range(len(current_full_y)))
     current_full_y_pct = [value * 100.0 for value in current_full_y]
 
+    future_x_values = list(range(current_bar_index, len(current_full_y)))
+    current_future_y_pct = [value * 100.0 for value in current_full_y[current_bar_index:]]
+
     plt.figure(figsize=(16, 9))
+
     plt.plot(
         x_values,
         current_full_y_pct,
         linewidth=2.5,
-        label=f"CURRENT {current_hour_start_text}"
+        alpha=0.75,
+        label=f"CURRENT full | {current_hour_start_text}",
+    )
+
+    plt.plot(
+        future_x_values,
+        current_future_y_pct,
+        linewidth=3.0,
+        label="CURRENT future after signal",
     )
 
     for rank, item in enumerate(candidates_to_plot, start=1):
@@ -515,12 +592,45 @@ def save_candidates_plot(
         plt.plot(
             x_values,
             candidate_y_pct,
-            linewidth=1.2,
-            alpha=0.85,
+            linewidth=1.0,
+            alpha=0.35,
             label=(
                 f"{rank}. {passed_mark}{item['hour_start']} | "
                 f"corr={item['correlation']:.4f}"
             ),
+        )
+
+        rebased_future_path = build_rebased_future_path(
+            candidate_y=candidate_payload["y"],
+            current_full_y=current_full_y,
+            current_bar_index=current_bar_index,
+        )
+        rebased_future_y_pct = [value * 100.0 for value in rebased_future_path]
+
+        plt.plot(
+            future_x_values,
+            rebased_future_y_pct,
+            linewidth=1.5,
+            alpha=0.8,
+            linestyle="--",
+        )
+
+    median_projected_future_path = build_median_projected_future_path(
+        candidates_to_plot=candidates_to_plot,
+        prepared_hours_map=prepared_hours_map,
+        current_full_y=current_full_y,
+        current_bar_index=current_bar_index,
+    )
+
+    if median_projected_future_path is not None:
+        median_projected_future_y_pct = [value * 100.0 for value in median_projected_future_path]
+
+        plt.plot(
+            future_x_values,
+            median_projected_future_y_pct,
+            linewidth=3.0,
+            linestyle=":",
+            label="MEDIAN projected future",
         )
 
     plt.axvline(
@@ -531,7 +641,7 @@ def save_candidates_plot(
     )
 
     plt.title(
-        f"Текущий час и найденные кандидаты | {current_hour_start_text} UTC | "
+        f"Текущий час, кандидаты и сравнение future-path | {current_hour_start_text} UTC | "
         f"bar_index={current_bar_index}"
     )
     plt.xlabel("bar_index")
@@ -546,14 +656,14 @@ def save_candidates_plot(
 
 
 def print_signal_found(
-        current_hour,
-        ranked_candidates,
-        matched_candidates,
-        current_bar_index,
-        current_bar_start_time_text,
-        required_correlation,
-        required_match_count,
-        prepared_hours_map,
+    current_hour,
+    ranked_candidates,
+    matched_candidates,
+    current_bar_index,
+    current_bar_start_time_text,
+    required_correlation,
+    required_match_count,
+    prepared_hours_map,
 ):
     # Печатаем момент, когда найден рабочий сигнал по Пирсону.
     current_bar_close_time_text = get_bar_close_time_text(current_bar_start_time_text)
@@ -603,10 +713,10 @@ def print_signal_found(
 
 
 def print_best_result_without_signal(
-        best_snapshot,
-        required_correlation,
-        required_match_count,
-        prepared_hours_map,
+    best_snapshot,
+    required_correlation,
+    required_match_count,
+    prepared_hours_map,
 ):
     # Если сигнал за час не найден, печатаем лучший достигнутый результат.
     if best_snapshot is None:

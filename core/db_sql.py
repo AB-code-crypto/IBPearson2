@@ -2,25 +2,29 @@ def create_quotes_table_sql(table_name):
     # Таблица для BID/ASK-баров.
     return f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
-        bar_time_ts INTEGER PRIMARY KEY,
-        bar_time    TEXT NOT NULL,
-        contract    TEXT NOT NULL,
+        bar_time_ts    INTEGER PRIMARY KEY,
+        bar_time       TEXT NOT NULL,
 
-        ask_open    REAL,
-        bid_open    REAL,
+        bar_time_ts_ct INTEGER NOT NULL,
+        bar_time_ct    TEXT NOT NULL,
 
-        ask_high    REAL,
-        bid_high    REAL,
+        contract       TEXT NOT NULL,
 
-        ask_low     REAL,
-        bid_low     REAL,
+        ask_open       REAL,
+        bid_open       REAL,
 
-        ask_close   REAL,
-        bid_close   REAL,
+        ask_high       REAL,
+        bid_high       REAL,
 
-        volume      REAL,
-        average     REAL,
-        bar_count   INTEGER
+        ask_low        REAL,
+        bid_low        REAL,
+
+        ask_close      REAL,
+        bid_close      REAL,
+
+        volume         REAL,
+        average        REAL,
+        bar_count      INTEGER
     );
     """
 
@@ -34,6 +38,10 @@ def upsert_quotes_sql(table_name):
     INSERT INTO {table_name} (
         bar_time_ts,
         bar_time,
+
+        bar_time_ts_ct,
+        bar_time_ct,
+
         contract,
 
         ask_open,
@@ -52,9 +60,13 @@ def upsert_quotes_sql(table_name):
         average,
         bar_count
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(bar_time_ts) DO UPDATE SET
         bar_time = excluded.bar_time,
+
+        bar_time_ts_ct = excluded.bar_time_ts_ct,
+        bar_time_ct = excluded.bar_time_ct,
+
         contract = excluded.contract,
 
         ask_open = excluded.ask_open,
@@ -86,16 +98,26 @@ def upsert_quotes_ask_sql(table_name):
     INSERT INTO {table_name} (
         bar_time_ts,
         bar_time,
+
+        bar_time_ts_ct,
+        bar_time_ct,
+
         contract,
+
         ask_open,
         ask_high,
         ask_low,
         ask_close
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(bar_time_ts) DO UPDATE SET
         bar_time = excluded.bar_time,
+
+        bar_time_ts_ct = excluded.bar_time_ts_ct,
+        bar_time_ct = excluded.bar_time_ct,
+
         contract = excluded.contract,
+
         ask_open = excluded.ask_open,
         ask_high = excluded.ask_high,
         ask_low = excluded.ask_low,
@@ -112,16 +134,26 @@ def upsert_quotes_bid_sql(table_name):
     INSERT INTO {table_name} (
         bar_time_ts,
         bar_time,
+
+        bar_time_ts_ct,
+        bar_time_ct,
+
         contract,
+
         bid_open,
         bid_high,
         bid_low,
         bid_close
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(bar_time_ts) DO UPDATE SET
         bar_time = excluded.bar_time,
+
+        bar_time_ts_ct = excluded.bar_time_ts_ct,
+        bar_time_ct = excluded.bar_time_ct,
+
         contract = excluded.contract,
+
         bid_open = excluded.bid_open,
         bid_high = excluded.bid_high,
         bid_low = excluded.bid_low,
@@ -134,18 +166,22 @@ def create_ohlc_table_sql(table_name):
     # Таблица для одиночного потока OHLC, например VIX/TRADES.
     return f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
-        bar_time_ts INTEGER PRIMARY KEY,
-        bar_time    TEXT NOT NULL,
-        contract    TEXT NOT NULL,
+        bar_time_ts    INTEGER PRIMARY KEY,
+        bar_time       TEXT NOT NULL,
 
-        open        REAL,
-        high        REAL,
-        low         REAL,
-        close       REAL,
+        bar_time_ts_ct INTEGER NOT NULL,
+        bar_time_ct    TEXT NOT NULL,
 
-        volume      REAL,
-        average     REAL,
-        bar_count   INTEGER
+        contract       TEXT NOT NULL,
+
+        open           REAL,
+        high           REAL,
+        low            REAL,
+        close          REAL,
+
+        volume         REAL,
+        average        REAL,
+        bar_count      INTEGER
     );
     """
 
@@ -156,23 +192,35 @@ def upsert_ohlc_sql(table_name):
     INSERT INTO {table_name} (
         bar_time_ts,
         bar_time,
+
+        bar_time_ts_ct,
+        bar_time_ct,
+
         contract,
+
         open,
         high,
         low,
         close,
+
         volume,
         average,
         bar_count
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(bar_time_ts) DO UPDATE SET
         bar_time = excluded.bar_time,
+
+        bar_time_ts_ct = excluded.bar_time_ts_ct,
+        bar_time_ct = excluded.bar_time_ct,
+
         contract = excluded.contract,
+
         open = excluded.open,
         high = excluded.high,
         low = excluded.low,
         close = excluded.close,
+
         volume = excluded.volume,
         average = excluded.average,
         bar_count = excluded.bar_count
