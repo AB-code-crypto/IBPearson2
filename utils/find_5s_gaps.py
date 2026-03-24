@@ -5,6 +5,7 @@
 
 import sqlite3
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from config import settings_live as settings
 
 # ============================================================================
@@ -21,6 +22,8 @@ TABLE_NAME = "MNQ_5s"
 
 # Для 5-секундных данных ожидаем строго такой шаг между соседними свечами.
 EXPECTED_STEP_SECONDS = 5
+
+CHICAGO_TZ = ZoneInfo("America/Chicago")
 
 # Штатные паузы MNQ/CME, которые не считаем дырками.
 #
@@ -145,6 +148,13 @@ def format_utc_ts(timestamp_utc):
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def format_ct_ts_from_utc_ts(timestamp_utc):
+    # Преобразуем UTC unix timestamp в читаемую строку CT.
+    dt_utc = datetime.fromtimestamp(timestamp_utc, tz=timezone.utc)
+    dt_ct = dt_utc.astimezone(CHICAGO_TZ)
+    return dt_ct.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def ensure_table_exists(conn, table_name):
     # Проверяем, что нужная таблица существует в базе.
     sql = "SELECT name FROM sqlite_master WHERE type='table' AND name = ?"
@@ -239,7 +249,8 @@ def print_gap(gap_number, gap_start_ts, gap_end_ts, reason):
 
     print(
         f"[{gap_number}] Найдена дырка: "
-        f"{format_utc_ts(gap_start_ts)} -> {format_utc_ts(gap_end_ts_half_open)} | "
+        f"UTC {format_utc_ts(gap_start_ts)} -> {format_utc_ts(gap_end_ts_half_open)} | "
+        f"CT {format_ct_ts_from_utc_ts(gap_start_ts)} -> {format_ct_ts_from_utc_ts(gap_end_ts_half_open)} | "
         f"пропущено баров: {missing_bars} | причина: {reason}"
     )
 
@@ -305,8 +316,10 @@ def find_gaps_in_rows(sorted_timestamps):
             else:
                 print(
                     f"[{gap_count}] Найдена аномалия последовательности: "
-                    f"prev={format_utc_ts(previous_ts)}, "
-                    f"curr={format_utc_ts(current_ts)}, "
+                    f"prev_utc={format_utc_ts(previous_ts)}, "
+                    f"curr_utc={format_utc_ts(current_ts)}, "
+                    f"prev_ct={format_ct_ts_from_utc_ts(previous_ts)}, "
+                    f"curr_ct={format_ct_ts_from_utc_ts(current_ts)}, "
                     f"delta={delta_seconds} сек | причина: {reason}"
                 )
 

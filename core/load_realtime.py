@@ -1,8 +1,10 @@
 import asyncio
 import math
 import sqlite3
+import traceback
 from datetime import timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from ib_async import Contract
 
@@ -34,6 +36,8 @@ REALTIME_WHAT_TO_SHOW_LIST = ("BID", "ASK")
 # Как часто ждём восстановления соединения / market data farm
 # перед самой первой подпиской.
 REALTIME_READY_WAIT_SECONDS = 1
+
+CHICAGO_TZ = ZoneInfo("America/Chicago")
 
 
 def build_futures_contract(instrument_code, instrument_row, contract_row):
@@ -185,6 +189,28 @@ def format_utc(dt):
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def build_ct_time_fields_from_utc_dt(dt_utc):
+    # Строим CT-поля из UTC datetime.
+    #
+    # bar_time_ts_ct - это локальная числовая ось проекта в CT,
+    # а не стандартный Unix timestamp.
+    dt_utc = dt_utc.astimezone(timezone.utc)
+    utc_ts = int(dt_utc.timestamp())
+
+    dt_ct = dt_utc.astimezone(CHICAGO_TZ)
+    ct_offset = dt_ct.utcoffset()
+
+    if ct_offset is None:
+        raise ValueError(
+            f"Не удалось определить UTC offset для Chicago time. dt_utc={dt_utc}"
+        )
+
+    bar_time_ts_ct = utc_ts + int(ct_offset.total_seconds())
+    bar_time_ct = dt_ct.strftime("%Y-%m-%d %H:%M:%S")
+
+    return bar_time_ts_ct, bar_time_ct
+
+
 def validate_price_value(value, field_name, stream_name, contract_name, bar_time_text):
     # Проверяем одно конкретное ценовое поле realtime-бара.
     #
@@ -296,12 +322,15 @@ def write_realtime_bar_to_sqlite(conn, table_name, contract_name, what_to_show, 
     dt = bar.time.astimezone(timezone.utc)
     bar_time_ts = int(dt.timestamp())
     bar_time = format_utc(dt)
+    bar_time_ts_ct, bar_time_ct = build_ct_time_fields_from_utc_dt(dt)
 
     if what_to_show == "ASK":
         sql = upsert_quotes_ask_sql(table_name)
         params = (
             bar_time_ts,
             bar_time,
+            bar_time_ts_ct,
+            bar_time_ct,
             contract_name,
             bar.open_,
             bar.high,
@@ -313,6 +342,8 @@ def write_realtime_bar_to_sqlite(conn, table_name, contract_name, what_to_show, 
         params = (
             bar_time_ts,
             bar_time,
+            bar_time_ts_ct,
+            bar_time_ct,
             contract_name,
             bar.open_,
             bar.high,
@@ -512,59 +543,69 @@ def build_realtime_update_handler(
     # Для каждой отдельной подписки делаем свой обработчик,
     # чтобы BID и ASK обрабатывались независимо и без догадок по контексту.
     def on_bar_update(bars, has_new_bar):
-        # Пишем только когда реально добавился новый бар,
-        # а не когда просто обновился последний.
-        if not has_new_bar:
-            return
+        try:
+            # Пишем только когда реально добавился новый бар,
+            # а не когда просто обновился последний.
+            if not has_new_bar:
+                return
 
-        if len(bars) == 0:
-            return
+            if len(bars) == 0:
+                return
 
-        bar = bars[-1]
-        validation_error = validate_realtime_bar(contract, what_to_show, bar)
+            bar = bars[-1]
+            validation_error = validate_realtime_bar(contract, what_to_show, bar)
 
-        if validation_error is not None:
-            log_warning(
+            if validation_error is not None:
+                log_warning(
+                    logger,
+                    f"Пропускаю некорректный realtime-бар. {validation_error}",
+                    to_telegram=False,
+                )
+                return
+
+            write_realtime_bar_to_sqlite(
+                conn=conn,
+                table_name=table_name,
+                contract_name=contract.localSymbol,
+                what_to_show=what_to_show,
+                bar=bar,
+            )
+
+            log_info(
                 logger,
-                f"Пропускаю некорректный realtime-бар. {validation_error}",
+                format_realtime_bar_message(contract, what_to_show, bar),
                 to_telegram=False,
             )
-            return
 
-        write_realtime_bar_to_sqlite(
-            conn=conn,
-            table_name=table_name,
-            contract_name=contract.localSymbol,
-            what_to_show=what_to_show,
-            bar=bar,
-        )
+            bar_time_ts = int(bar.time.astimezone(timezone.utc).timestamp())
 
-        log_info(
-            logger,
-            format_realtime_bar_message(contract, what_to_show, bar),
-            to_telegram=False,
-        )
+            maybe_start_recent_backfill_task(
+                ib=ib,
+                ib_health=ib_health,
+                settings=settings,
+                instrument_code=instrument_code,
+                contract_local_symbol=contract_local_symbol,
+                recent_backfill_state=recent_backfill_state,
+                what_to_show=what_to_show,
+                bar_time_ts=bar_time_ts,
+            )
 
-        bar_time_ts = int(bar.time.astimezone(timezone.utc).timestamp())
+            maybe_feed_pearson_live(
+                pearson_live_runtime=pearson_live_runtime,
+                pearson_live_state=pearson_live_state,
+                instrument_code=instrument_code,
+                what_to_show=what_to_show,
+                bar=bar,
+            )
 
-        maybe_start_recent_backfill_task(
-            ib=ib,
-            ib_health=ib_health,
-            settings=settings,
-            instrument_code=instrument_code,
-            contract_local_symbol=contract_local_symbol,
-            recent_backfill_state=recent_backfill_state,
-            what_to_show=what_to_show,
-            bar_time_ts=bar_time_ts,
-        )
-
-        maybe_feed_pearson_live(
-            pearson_live_runtime=pearson_live_runtime,
-            pearson_live_state=pearson_live_state,
-            instrument_code=instrument_code,
-            what_to_show=what_to_show,
-            bar=bar,
-        )
+        except Exception as exc:
+            log_warning(
+                logger,
+                f"Ошибка в realtime update handler "
+                f"({contract.localSymbol}, {what_to_show}): {exc}\n"
+                f"{traceback.format_exc()}",
+                to_telegram=False,
+            )
 
     return on_bar_update
 

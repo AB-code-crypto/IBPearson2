@@ -4,6 +4,7 @@
 '''
 import sqlite3
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from config import settings_live as settings
 
 # ============================================================================
@@ -30,6 +31,8 @@ PRICE_COLUMNS = [
     "bid_close",
 ]
 
+CHICAGO_TZ = ZoneInfo("America/Chicago")
+
 
 # ============================================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -38,6 +41,13 @@ def format_utc_ts(timestamp_utc):
     # Преобразуем unix timestamp в читаемую строку UTC.
     dt = datetime.fromtimestamp(timestamp_utc, tz=timezone.utc)
     return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_ct_ts(timestamp_utc):
+    # Преобразуем тот же самый абсолютный timestamp в читаемую строку CT.
+    dt_utc = datetime.fromtimestamp(timestamp_utc, tz=timezone.utc)
+    dt_ct = dt_utc.astimezone(CHICAGO_TZ)
+    return dt_ct.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def ensure_table_exists(conn, table_name):
@@ -109,7 +119,9 @@ def print_missing_price_row(problem_number, row):
 
     print(
         f"[{problem_number}] Найдена свечка с отсутствующими ценами: "
-        f"{format_utc_ts(bar_time_ts)} | отсутствуют поля: {missing_columns_text}"
+        f"UTC={format_utc_ts(bar_time_ts)} | "
+        f"CT={format_ct_ts(bar_time_ts)} | "
+        f"отсутствуют поля: {missing_columns_text}"
     )
 
 
@@ -135,7 +147,8 @@ def main():
 
         print(
             "Доступная история в таблице: "
-            f"{format_utc_ts(history_min_ts)} -> {format_utc_ts(history_max_ts)}"
+            f"UTC {format_utc_ts(history_min_ts)} -> {format_utc_ts(history_max_ts)} | "
+            f"CT {format_ct_ts(history_min_ts)} -> {format_ct_ts(history_max_ts)}"
         )
 
         sql = f"SELECT COUNT(*) FROM {TABLE_NAME}"

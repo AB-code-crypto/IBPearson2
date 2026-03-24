@@ -5,6 +5,7 @@
 import asyncio
 import sqlite3
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 from config import settings_for_gap as settings
 from contracts import Instrument
@@ -33,8 +34,14 @@ EXPECTED_STEP_SECONDS = 5
 # Поэтому для исторического запроса всегда берём минимум 1 минуту,
 # а потом уже отфильтровываем только нужные бары целевого интервала.
 MIN_HISTORICAL_SIDE_REQUEST_SECONDS = 60
+# Для исторических side-запросов берём небольшой запас вправо на один бар.
+# Это помогает добрать хвостовой бар интервала, который IB иногда не отдаёт
+# при запросе ровно до правой границы.
+HISTORICAL_SIDE_RIGHT_PADDING_SECONDS = EXPECTED_STEP_SECONDS
 setup_logging()
 logger = get_logger(__name__)
+
+CHICAGO_TZ = ZoneInfo("America/Chicago")
 
 
 # ============================================================================
@@ -198,23 +205,54 @@ def build_side_intervals(problem_rows, what_to_show):
     return intervals
 
 
+def build_ct_time_fields_from_utc_dt(dt_utc):
+    # Строим CT-поля из UTC datetime.
+    #
+    # bar_time_ts_ct - это локальная числовая ось проекта в CT,
+    # а не стандартный Unix timestamp.
+    dt_utc = dt_utc.astimezone(timezone.utc)
+    utc_ts = int(dt_utc.timestamp())
+
+    dt_ct = dt_utc.astimezone(CHICAGO_TZ)
+    ct_offset = dt_ct.utcoffset()
+
+    if ct_offset is None:
+        raise ValueError(
+            f"Не удалось определить UTC offset для Chicago time. dt_utc={dt_utc}"
+        )
+
+    bar_time_ts_ct = utc_ts + int(ct_offset.total_seconds())
+    bar_time_ct = dt_ct.strftime("%Y-%m-%d %H:%M:%S")
+
+    return bar_time_ts_ct, bar_time_ct
+
+
 def build_single_side_quote_rows(bars, contract_name, what_to_show):
     # Строим строки для записи только одной стороны quote-таблицы.
     #
     # Формат строки совпадает с side-specific UPSERT из db_sql.py:
-    # ASK -> (bar_time_ts, bar_time, contract, ask_open, ask_high, ask_low, ask_close)
-    # BID -> (bar_time_ts, bar_time, contract, bid_open, bid_high, bid_low, bid_close)
+    # ASK -> (
+    #     bar_time_ts, bar_time, bar_time_ts_ct, bar_time_ct,
+    #     contract, ask_open, ask_high, ask_low, ask_close
+    # )
+    # BID -> (
+    #     bar_time_ts, bar_time, bar_time_ts_ct, bar_time_ct,
+    #     contract, bid_open, bid_high, bid_low, bid_close
+    # )
     rows = []
 
     for bar in bars:
         dt = bar.date.astimezone(timezone.utc)
         bar_time_ts = int(dt.timestamp())
         bar_time = format_utc(dt)
+        bar_time_ts_ct, bar_time_ct = build_ct_time_fields_from_utc_dt(dt)
 
         rows.append(
             (
                 bar_time_ts,
                 bar_time,
+                bar_time_ts_ct,
+                bar_time_ct,
                 contract_name,
                 bar.open,
                 bar.high,
@@ -279,11 +317,17 @@ async def load_quote_side_chunk_once(
         if target_duration_seconds < MIN_HISTORICAL_SIDE_REQUEST_SECONDS:
             request_start_dt = end_dt - timedelta(seconds=MIN_HISTORICAL_SIDE_REQUEST_SECONDS)
 
+        # Берём небольшой запас вправо на один бар.
+        # В БД потом всё равно пишем только исходный целевой полуинтервал
+        # [start_dt, end_dt), но правый запас помогает получить хвостовой бар,
+        # который IB иногда не отдаёт при endDateTime ровно на границе.
+        request_end_dt = end_dt + timedelta(seconds=HISTORICAL_SIDE_RIGHT_PADDING_SECONDS)
+
         bars = await request_historical_data_with_reconnect(
             ib=ib,
             ib_health=ib_health,
             contract=contract,
-            end_dt=end_dt,
+            end_dt=request_end_dt,
             start_dt=request_start_dt,
             bar_size_setting=bar_size_setting,
             what_to_show=what_to_show,
@@ -301,6 +345,17 @@ async def load_quote_side_chunk_once(
 
             if start_dt <= bar_dt < end_dt:
                 filtered_bars.append(bar)
+
+        expected_bars = int((end_dt - start_dt).total_seconds() // EXPECTED_STEP_SECONDS)
+        if len(filtered_bars) < expected_bars:
+            log_warning(
+                logger,
+                f"Фьючерс {contract.localSymbol}: historical request {what_to_show} "
+                f"вернул меньше баров, чем ожидалось для целевого интервала "
+                f"{format_utc(start_dt)} -> {format_utc(end_dt)}. "
+                f"Получено={len(filtered_bars)}, ожидалось={expected_bars}",
+                to_telegram=False,
+            )
 
         interval_text = f"{format_utc(start_dt)} -> {format_utc(end_dt)}"
         validation_error = None

@@ -5,6 +5,7 @@
 import asyncio
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from ib_async import Contract
 
 from config import settings_for_gap as settings
@@ -29,7 +30,7 @@ CONTRACT_LOCAL_SYMBOL = "MNQM6"
 
 # Начало интервала в UTC.
 # Скрипт всегда качает ровно один час от этой точки в будущее.
-START_UTC = "2026-03-20 23:00:00"
+START_UTC = "2026-03-24 12:20:00"
 
 # Длина закачиваемого окна фиксирована и равна одному часу.
 DURATION_SECONDS = 3600
@@ -42,6 +43,8 @@ HISTORICAL_REQUEST_TIMEOUT_SECONDS = 90
 
 setup_logging()
 logger = get_logger(__name__)
+
+CHICAGO_TZ = ZoneInfo("America/Chicago")
 
 
 def parse_utc_datetime(text):
@@ -120,6 +123,28 @@ def build_futures_contract(instrument_code, instrument_row, contract_row):
     )
 
 
+def build_ct_time_fields_from_utc_dt(dt_utc):
+    # Строим CT-поля из UTC datetime.
+    #
+    # bar_time_ts_ct - это локальная числовая ось проекта в CT,
+    # а не стандартный Unix timestamp.
+    dt_utc = dt_utc.astimezone(timezone.utc)
+    utc_ts = int(dt_utc.timestamp())
+
+    dt_ct = dt_utc.astimezone(CHICAGO_TZ)
+    ct_offset = dt_ct.utcoffset()
+
+    if ct_offset is None:
+        raise ValueError(
+            f"Не удалось определить UTC offset для Chicago time. dt_utc={dt_utc}"
+        )
+
+    bar_time_ts_ct = utc_ts + int(ct_offset.total_seconds())
+    bar_time_ct = dt_ct.strftime("%Y-%m-%d %H:%M:%S")
+
+    return bar_time_ts_ct, bar_time_ct
+
+
 def build_quote_rows(bid_bars, ask_bars, contract_name):
     # Преобразуем BID/ASK бары в строки для SQLite.
     rows_by_ts = {}
@@ -129,9 +154,13 @@ def build_quote_rows(bid_bars, ask_bars, contract_name):
         bar_time_ts = int(dt.timestamp())
 
         if bar_time_ts not in rows_by_ts:
+            bar_time_ts_ct, bar_time_ct = build_ct_time_fields_from_utc_dt(dt)
+
             rows_by_ts[bar_time_ts] = {
                 "bar_time_ts": bar_time_ts,
                 "bar_time": format_utc(dt),
+                "bar_time_ts_ct": bar_time_ts_ct,
+                "bar_time_ct": bar_time_ct,
                 "contract": contract_name,
                 "ask_open": None,
                 "bid_open": None,
@@ -156,9 +185,13 @@ def build_quote_rows(bid_bars, ask_bars, contract_name):
         bar_time_ts = int(dt.timestamp())
 
         if bar_time_ts not in rows_by_ts:
+            bar_time_ts_ct, bar_time_ct = build_ct_time_fields_from_utc_dt(dt)
+
             rows_by_ts[bar_time_ts] = {
                 "bar_time_ts": bar_time_ts,
                 "bar_time": format_utc(dt),
+                "bar_time_ts_ct": bar_time_ts_ct,
+                "bar_time_ct": bar_time_ct,
                 "contract": contract_name,
                 "ask_open": None,
                 "bid_open": None,
@@ -186,6 +219,8 @@ def build_quote_rows(bid_bars, ask_bars, contract_name):
             (
                 row["bar_time_ts"],
                 row["bar_time"],
+                row["bar_time_ts_ct"],
+                row["bar_time_ct"],
                 row["contract"],
                 row["ask_open"],
                 row["bid_open"],

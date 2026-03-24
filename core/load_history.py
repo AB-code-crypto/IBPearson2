@@ -1,7 +1,42 @@
+# bar_time_ts      — основной UTC Unix timestamp бара.
+#                    Это абсолютное время и канонический временной ключ в проекте.
+#
+# bar_time_ct      — то же самое время бара, но в человекочитаемом виде
+#                    в зоне America/Chicago (CT).
+#
+# bar_time_ts_ct   — не "настоящий отдельный Unix timestamp", а внутренняя
+#                    локальная числовая ось проекта для CT-времени.
+#                    Считается так:
+#
+#                        bar_time_ts_ct = bar_time_ts + ct_offset_seconds
+#
+#                    где ct_offset_seconds:
+#                    - зимой = -21600 секунд (UTC-6, CST)
+#                    - летом = -18000 секунд (UTC-5, CDT)
+#
+#                    То есть:
+#                    - bar_time_ts     хранит абсолютный момент времени в UTC
+#                    - bar_time_ts_ct  хранит тот же момент на локальной
+#                      числовой оси CT, чтобы торговая логика могла работать
+#                      по CT-часам без постоянных обратных переводов времени.
+#
+# Переход на зимнее/летнее время учитывается автоматически через timezone
+# America/Chicago:
+# - для каждого бара сначала определяется локальное CT-время,
+# - затем берётся фактический UTC offset именно для этой даты,
+# - после этого считается bar_time_ts_ct.
+#
+# Благодаря этому:
+# - в хранилище остаётся канонический UTC timestamp,
+# - торговая логика, hour_slot и сессионные правила могут работать по CT,
+# - вопрос DST не размазывается по проекту и живёт только в одном месте:
+#   в момент преобразования входящего UTC-времени в CT-поля.
+
 import asyncio
 import math
 import sqlite3
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from ib_async import Contract
 
@@ -31,6 +66,12 @@ from core.logger import get_logger, log_info, log_warning
 
 # Логгер именно этого файла.
 logger = get_logger(__name__)
+
+# Рыночная временная зона CME для MNQ/NQ.
+#
+# В проекте договорились хранить базовый timestamp в UTC,
+# а дополнительно сохранять локальное биржевое время Chicago / Central Time.
+CT_TIMEZONE = ZoneInfo("America/Chicago")
 
 # Пауза после каждого historical request.
 #
@@ -86,6 +127,31 @@ def format_utc(dt, for_ib=False):
 def format_utc_ts(ts):
     # Удобный helper: из unix timestamp сразу делаем строку UTC для логов.
     return format_utc(datetime.fromtimestamp(ts, tz=timezone.utc))
+
+
+def build_ct_time_fields_from_utc_dt(dt_utc):
+    # По UTC datetime считаем два дополнительных поля для БД:
+    # - bar_time_ts_ct: локальная числовая ось времени в CT;
+    # - bar_time_ct: человекочитаемое локальное время в CT.
+    #
+    # Важно:
+    # bar_time_ts_ct — это не POSIX timestamp в строгом смысле,
+    # а именно локальный числовой CT-timestamp проекта.
+    # Он нужен, чтобы стратегическая логика могла работать по CT-часам
+    # без постоянных runtime-конвертаций туда-обратно.
+    dt_utc = dt_utc.astimezone(timezone.utc)
+    dt_ct = dt_utc.astimezone(CT_TIMEZONE)
+
+    utc_ts = int(dt_utc.timestamp())
+    ct_offset = dt_ct.utcoffset()
+
+    if ct_offset is None:
+        raise ValueError("Не удалось определить UTC offset для CT timezone")
+
+    bar_time_ts_ct = utc_ts + int(ct_offset.total_seconds())
+    bar_time_ct = dt_ct.strftime("%Y-%m-%d %H:%M:%S")
+
+    return bar_time_ts_ct, bar_time_ct
 
 
 def parse_utc_iso_to_ts(utc_text):
@@ -304,11 +370,14 @@ def build_quote_rows(bid_bars, ask_bars, contract_name):
     for bar in ask_bars:
         dt = bar.date.astimezone(timezone.utc)
         bar_time_ts = int(dt.timestamp())
+        bar_time_ts_ct, bar_time_ct = build_ct_time_fields_from_utc_dt(dt)
 
         if bar_time_ts not in rows_by_ts:
             rows_by_ts[bar_time_ts] = {
                 "bar_time_ts": bar_time_ts,
                 "bar_time": format_utc(dt),
+                "bar_time_ts_ct": bar_time_ts_ct,
+                "bar_time_ct": bar_time_ct,
                 "contract": contract_name,
                 "ask_open": None,
                 "bid_open": None,
@@ -331,11 +400,14 @@ def build_quote_rows(bid_bars, ask_bars, contract_name):
     for bar in bid_bars:
         dt = bar.date.astimezone(timezone.utc)
         bar_time_ts = int(dt.timestamp())
+        bar_time_ts_ct, bar_time_ct = build_ct_time_fields_from_utc_dt(dt)
 
         if bar_time_ts not in rows_by_ts:
             rows_by_ts[bar_time_ts] = {
                 "bar_time_ts": bar_time_ts,
                 "bar_time": format_utc(dt),
+                "bar_time_ts_ct": bar_time_ts_ct,
+                "bar_time_ct": bar_time_ct,
                 "contract": contract_name,
                 "ask_open": None,
                 "bid_open": None,
@@ -363,6 +435,8 @@ def build_quote_rows(bid_bars, ask_bars, contract_name):
             (
                 row["bar_time_ts"],
                 row["bar_time"],
+                row["bar_time_ts_ct"],
+                row["bar_time_ct"],
                 row["contract"],
                 row["ask_open"],
                 row["bid_open"],
@@ -388,10 +462,14 @@ def build_ohlc_rows(bars, contract_name):
     for bar in bars:
         dt = bar.date.astimezone(timezone.utc)
         bar_time_ts = int(dt.timestamp())
+        bar_time_ts_ct, bar_time_ct = build_ct_time_fields_from_utc_dt(dt)
+
         rows.append(
             (
                 bar_time_ts,
                 format_utc(dt),
+                bar_time_ts_ct,
+                bar_time_ct,
                 contract_name,
                 bar.open,
                 bar.high,
