@@ -4,6 +4,7 @@
 '''
 import sqlite3
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from config import settings_live as settings
 from contracts import Instrument
@@ -13,6 +14,8 @@ from ts.prepared_builder import (
     load_price_rows_for_one_hour,
     validate_price_rows,
 )
+
+CHICAGO_TZ = ZoneInfo("America/Chicago")
 
 
 # ============================================================
@@ -44,6 +47,13 @@ def parse_optional_utc_hour_start_text(hour_start_text):
         )
 
     return int(dt.timestamp())
+
+
+def hour_start_text_ct_from_ts(hour_start_ts):
+    # Преобразуем UTC timestamp начала часа в текстовый формат CT для удобной проверки.
+    dt_utc = datetime.fromtimestamp(hour_start_ts, tz=timezone.utc)
+    dt_ct = dt_utc.astimezone(CHICAGO_TZ)
+    return dt_ct.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def load_candidate_hour_starts(price_conn, table_name, start_hour_ts, end_hour_ts):
@@ -108,6 +118,7 @@ def main():
 
         for index, hour_start_ts in enumerate(candidate_hour_starts, start=1):
             hour_start_text = hour_start_text_from_ts(hour_start_ts)
+            hour_start_text_ct = hour_start_text_ct_from_ts(hour_start_ts)
 
             rows = load_price_rows_for_one_hour(
                 price_conn=conn,
@@ -124,7 +135,7 @@ def main():
                 invalid_hours += 1
                 print(
                     f"[{index}/{total_hours}] "
-                    f"{hour_start_text} UTC -> НЕВАЛИДЕН: {exc}"
+                    f"{hour_start_text} UTC | {hour_start_text_ct} CT -> НЕВАЛИДЕН: {exc}"
                 )
 
         print("")

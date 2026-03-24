@@ -81,6 +81,19 @@ def parse_utc_hour_start_text(hour_start_text):
     return int(dt.timestamp())
 
 
+def format_ct_axis_ts(ts_ct):
+    # Преобразуем timestamp локальной CT-оси проекта в читаемую строку.
+    return datetime.fromtimestamp(ts_ct, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def get_bar_close_time_text_ct(bar_start_time_text_ct):
+    # В таблице price DB bar_time_ct - это время начала 5-секундного бара на CT-оси.
+    dt = datetime.strptime(bar_start_time_text_ct, "%Y-%m-%d %H:%M:%S")
+    dt = dt.replace(tzinfo=timezone.utc)
+    close_dt = dt + timedelta(seconds=5)
+    return close_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def get_bar_close_time_text(bar_start_time_text):
     # В таблице price DB bar_time - это время начала 5-секундного бара.
     # Для сигнала удобнее печатать фактическое время закрытия этого бара.
@@ -326,7 +339,7 @@ def print_ranked_candidates(ranked_candidates, required_correlation):
 
         print(
             f" {mark}{rank:>2}. "
-            f"{item['hour_start']} | "
+            f"{item['hour_start_ct']} CT | "
             f"{item['contract']} | "
             f"корреляция={item['correlation']:.6f}"
         )
@@ -350,7 +363,7 @@ def print_forward_block(matched_candidates, prepared_hours_map, current_bar_inde
 
         print(
             f"  {rank:>2}. "
-            f"{item['hour_start']} | "
+            f"{item['hour_start_ct']} CT | "
             f"{item['contract']} | "
             f"корреляция={item['correlation']:.6f} | "
             f"баров_до_конца={forward_stats['bars_left']} | "
@@ -452,9 +465,12 @@ def print_signal_quality_block(matched_candidates, prepared_hours_map, current_b
     )
 
 
-def build_full_current_hour_y(current_hour_rows, current_hour_start_ts):
+def build_full_current_hour_y(current_hour_rows, current_hour_start_ts, current_hour_start_ts_ct):
     # Строим полный y-ряд для рассматриваемого текущего часа по всей истории часа.
-    runtime = PearsonCurrentHour(hour_start_ts=current_hour_start_ts)
+    runtime = PearsonCurrentHour(
+        hour_start_ts=current_hour_start_ts,
+        hour_start_ts_ct=current_hour_start_ts_ct,
+    )
 
     for row in current_hour_rows:
         runtime.add_bar(
@@ -537,6 +553,7 @@ def build_median_projected_future_path(
 
 def save_candidates_plot(
     current_hour_start_text,
+    current_hour_start_text_ct,
     current_full_y,
     ranked_candidates,
     prepared_hours_map,
@@ -595,7 +612,7 @@ def save_candidates_plot(
             linewidth=1.0,
             alpha=0.35,
             label=(
-                f"{rank}. {passed_mark}{item['hour_start']} | "
+                f"{rank}. {passed_mark}{item['hour_start_ct']} CT | "
                 f"corr={item['correlation']:.4f}"
             ),
         )
@@ -641,7 +658,8 @@ def save_candidates_plot(
     )
 
     plt.title(
-        f"Текущий час, кандидаты и сравнение future-path | {current_hour_start_text} UTC | "
+        f"Текущий час, кандидаты и сравнение future-path | "
+        f"{current_hour_start_text} UTC | {current_hour_start_text_ct} CT | "
         f"bar_index={current_bar_index}"
     )
     plt.xlabel("bar_index")
@@ -661,18 +679,21 @@ def print_signal_found(
     matched_candidates,
     current_bar_index,
     current_bar_start_time_text,
+    current_bar_start_time_text_ct,
     required_correlation,
     required_match_count,
     prepared_hours_map,
 ):
     # Печатаем момент, когда найден рабочий сигнал по Пирсону.
     current_bar_close_time_text = get_bar_close_time_text(current_bar_start_time_text)
+    current_bar_close_time_text_ct = get_bar_close_time_text_ct(current_bar_start_time_text_ct)
 
     print("")
     print("СИГНАЛ НАЙДЕН")
     print(
         f"  bar_index={current_bar_index} | "
         f"время_закрытия_бара={current_bar_close_time_text} UTC | "
+        f"{current_bar_close_time_text_ct} CT | "
         f"точек_в_префиксе={current_hour.current_n()} | "
         f"размер_top={len(ranked_candidates)}"
     )
@@ -729,6 +750,7 @@ def print_best_result_without_signal(
     print(
         f"  bar_index={best_snapshot['bar_index']} | "
         f"время_закрытия_бара={best_snapshot['bar_close_time_text']} UTC | "
+        f"{best_snapshot['bar_close_time_text_ct']} CT | "
         f"размер_top={len(best_snapshot['ranked_candidates'])}"
     )
     print(
@@ -799,12 +821,6 @@ def main():
     )
 
     current_hour_start_ts = parse_utc_hour_start_text(CURRENT_HOUR_START_TEXT)
-    current_hour_slot = datetime.fromtimestamp(
-        current_hour_start_ts,
-        tz=timezone.utc,
-    ).hour
-
-    allowed_hour_slots = resolve_allowed_hour_slots(current_hour_slot)
 
     price_conn = sqlite3.connect(settings.price_db_path)
     prepared_conn = sqlite3.connect(settings.prepared_db_path)
@@ -827,17 +843,23 @@ def main():
             hour_start_ts=current_hour_start_ts,
         )
 
+        current_hour_start_ts_ct = current_hour_rows[0]["bar_time_ts_ct"]
+        current_hour_start_text_ct = current_hour_rows[0]["bar_time_ct"]
+        current_hour_slot_ct = (current_hour_start_ts_ct // 3600) % 24
+
+        allowed_hour_slots = resolve_allowed_hour_slots(current_hour_slot_ct)
+
         prepared_hours = load_prepared_hours_by_slots(
             prepared_conn=prepared_conn,
             table_name=table_name,
-            hour_slots=allowed_hour_slots,
-            before_hour_start_ts=current_hour_start_ts,
+            hour_slots_ct=allowed_hour_slots,
+            before_hour_start_ts_ct=current_hour_start_ts_ct,
         )
 
         if not prepared_hours:
             raise ValueError(
                 f"Не найдено ни одного исторического prepared-часа "
-                f"для группы hour_slot={allowed_hour_slots}"
+                f"для группы hour_slot_ct={allowed_hour_slots}"
             )
 
         if len(prepared_hours) < MIN_HISTORY_CANDIDATES:
@@ -850,9 +872,13 @@ def main():
         current_full_y = build_full_current_hour_y(
             current_hour_rows=current_hour_rows,
             current_hour_start_ts=current_hour_start_ts,
+            current_hour_start_ts_ct=current_hour_start_ts_ct,
         )
 
-        current_hour = PearsonCurrentHour(hour_start_ts=current_hour_start_ts)
+        current_hour = PearsonCurrentHour(
+            hour_start_ts=current_hour_start_ts,
+            hour_start_ts_ct=current_hour_start_ts_ct,
+        )
         current_hour.set_candidates(prepared_hours)
 
         signal_found = False
@@ -896,7 +922,9 @@ def main():
             current_snapshot = {
                 "bar_index": current_bar_index,
                 "bar_start_time_text": row["bar_time"],
+                "bar_start_time_text_ct": row["bar_time_ct"],
                 "bar_close_time_text": get_bar_close_time_text(row["bar_time"]),
+                "bar_close_time_text_ct": get_bar_close_time_text_ct(row["bar_time_ct"]),
                 "ranked_candidates": ranked_candidates,
                 "matched_candidates": matched_candidates,
             }
@@ -914,6 +942,7 @@ def main():
                     matched_candidates=matched_candidates,
                     current_bar_index=current_bar_index,
                     current_bar_start_time_text=row["bar_time"],
+                    current_bar_start_time_text_ct=row["bar_time_ct"],
                     required_correlation=REQUIRED_CORRELATION,
                     required_match_count=REQUIRED_MATCH_COUNT,
                     prepared_hours_map=prepared_hours_map,
@@ -926,6 +955,7 @@ def main():
                 )
                 save_candidates_plot(
                     current_hour_start_text=CURRENT_HOUR_START_TEXT,
+                    current_hour_start_text_ct=current_hour_start_text_ct,
                     current_full_y=current_full_y,
                     ranked_candidates=ranked_candidates,
                     prepared_hours_map=prepared_hours_map,
@@ -956,6 +986,7 @@ def main():
                 )
                 save_candidates_plot(
                     current_hour_start_text=CURRENT_HOUR_START_TEXT,
+                    current_hour_start_text_ct=current_hour_start_text_ct,
                     current_full_y=current_full_y,
                     ranked_candidates=best_snapshot["ranked_candidates"],
                     prepared_hours_map=prepared_hours_map,

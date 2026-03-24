@@ -16,26 +16,26 @@ from ts.ts_time import resolve_allowed_hour_slots
 # ============================================================
 
 INSTRUMENT_CODE = "MNQ"
-HOUR_SLOT = 14
+HOUR_SLOT_CT = 14
 
-# Если нужно, можно ограничить только историей строго раньше этого часа.
-# Формат: "YYYY-MM-DD HH:MM:SS"
+# Если нужно, можно ограничить только историей строго раньше этого часа на CT-оси.
+# Формат: "YYYY-MM-DD HH:MM:SS" в CT.
 # Если None - ограничение не применяется.
-BEFORE_HOUR_START_TEXT = None
+BEFORE_HOUR_START_CT_TEXT = None
 
 
-def parse_optional_utc_hour_start_text(hour_start_text):
-    # Преобразуем текст "YYYY-MM-DD HH:MM:SS" в UTC timestamp начала часа.
+def parse_optional_ct_hour_start_text(hour_start_text_ct):
+    # Преобразуем текст "YYYY-MM-DD HH:MM:SS" в timestamp локальной CT-оси проекта.
     # Если передан None, возвращаем None.
-    if hour_start_text is None:
+    if hour_start_text_ct is None:
         return None
 
-    dt = datetime.strptime(hour_start_text, "%Y-%m-%d %H:%M:%S")
+    dt = datetime.strptime(hour_start_text_ct, "%Y-%m-%d %H:%M:%S")
     dt = dt.replace(tzinfo=timezone.utc)
 
     if dt.minute != 0 or dt.second != 0 or dt.microsecond != 0:
         raise ValueError(
-            f"Ожидалось точное начало часа, получено: {hour_start_text}"
+            f"Ожидалось точное начало часа, получено: {hour_start_text_ct}"
         )
 
     return int(dt.timestamp())
@@ -44,10 +44,11 @@ def parse_optional_utc_hour_start_text(hour_start_text):
 def print_hour_summary(prefix, hour_payload):
     # Короткая печать одного prepared-часа.
     print(f"{prefix}:")
-    print(f"  hour_start_ts: {hour_payload['hour_start_ts']}")
-    print(f"  hour_start:    {hour_payload['hour_start']} UTC")
-    print(f"  hour_slot:     {hour_payload['hour_slot']}")
-    print(f"  contract:      {hour_payload['contract']}")
+    print(f"  hour_start_ts:     {hour_payload['hour_start_ts']}")
+    print(f"  hour_start_ts_ct:  {hour_payload['hour_start_ts_ct']}")
+    print(f"  hour_start_ct:     {hour_payload['hour_start_ct']} CT")
+    print(f"  hour_slot_ct:      {hour_payload['hour_slot_ct']}")
+    print(f"  contract:          {hour_payload['contract']}")
     print(f"  len(y):        {len(hour_payload['y'])}")
     print(f"  len(sum_y):    {len(hour_payload['sum_y'])}")
     print(f"  len(sum_y2):   {len(hour_payload['sum_y2'])}")
@@ -87,15 +88,15 @@ def main():
         bar_size_setting=instrument_row["barSizeSetting"],
     )
 
-    before_hour_start_ts = parse_optional_utc_hour_start_text(BEFORE_HOUR_START_TEXT)
-    allowed_hour_slots = resolve_allowed_hour_slots(HOUR_SLOT)
+    before_hour_start_ts_ct = parse_optional_ct_hour_start_text(BEFORE_HOUR_START_CT_TEXT)
+    allowed_hour_slots = resolve_allowed_hour_slots(HOUR_SLOT_CT)
 
     print(f"Инструмент: {INSTRUMENT_CODE}")
     print(f"Таблица: {table_name}")
     print(f"prepared DB: {settings.prepared_db_path}")
-    print(f"Текущий hour_slot: {HOUR_SLOT}")
-    print(f"Разрешённые hour_slot: {allowed_hour_slots}")
-    print(f"BEFORE_HOUR_START_TEXT: {BEFORE_HOUR_START_TEXT}")
+    print(f"Текущий hour_slot_ct: {HOUR_SLOT_CT}")
+    print(f"Разрешённые hour_slot_ct: {allowed_hour_slots}")
+    print(f"BEFORE_HOUR_START_CT_TEXT: {BEFORE_HOUR_START_CT_TEXT}")
     print("")
 
     conn = sqlite3.connect(settings.prepared_db_path)
@@ -107,15 +108,15 @@ def main():
         hours = load_prepared_hours_by_slots(
             prepared_conn=conn,
             table_name=table_name,
-            hour_slots=allowed_hour_slots,
-            before_hour_start_ts=before_hour_start_ts,
+            hour_slots_ct=allowed_hour_slots,
+            before_hour_start_ts_ct=before_hour_start_ts_ct,
         )
 
         print(f"Найдено prepared-часов: {len(hours)}")
         print("")
 
         if not hours:
-            print("По заданной группе hour_slot ничего не найдено.")
+            print("По заданной группе hour_slot_ct ничего не найдено.")
             return
 
         first_hour = hours[0]
