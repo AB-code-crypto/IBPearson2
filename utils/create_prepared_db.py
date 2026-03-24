@@ -1,8 +1,20 @@
-'''
-ручной скрипт для массового заполнения prepared DB по заданному диапазону часов. Работает через общий sync-механизм: ищет candidate-часы в price DB, вставляет
-только отсутствующие prepared-часы, пропускает уже существующие и отдельно считает невалидные часы.
-'''
+"""
+ручной скрипт для массового заполнения prepared DB по заданному диапазону часов.
+Работает через общий sync-механизм: ищет candidate-часы в price DB, вставляет
+только отсутствующие prepared-часы, пропускает уже существующие и отдельно
+считает невалидные часы.
+
+Prepared DB теперь хранит CT-поля часа:
+- hour_start_ts_ct
+- hour_start_ct
+- hour_slot_ct
+
+При этом диапазон разового запуска здесь по-прежнему задаётся в UTC,
+потому что технический якорь prepared-часа остаётся hour_start_ts.
+"""
+
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from config import settings_live as settings
 from ts.prepared_sync import sync_prepared_hours_for_range
@@ -16,9 +28,11 @@ INSTRUMENT_CODE = "MNQ"
 # Оба ограничения необязательные.
 # Если None - ограничение не применяется.
 #
-# Это начало часа в UTC.
+# Здесь указываем именно начало часа в UTC.
 START_HOUR_TEXT = None
 END_HOUR_TEXT = None
+
+CHICAGO_TZ = ZoneInfo("America/Chicago")
 
 
 def parse_optional_utc_hour_start_text(hour_start_text):
@@ -39,6 +53,31 @@ def parse_optional_utc_hour_start_text(hour_start_text):
     return int(dt.timestamp())
 
 
+def format_utc_hour_start_ts(hour_start_ts):
+    # Преобразуем UTC timestamp начала часа в читаемый UTC-текст.
+    return datetime.fromtimestamp(hour_start_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_ct_hour_start_ts_from_utc(hour_start_ts):
+    # Преобразуем UTC timestamp начала часа в читаемый CT-текст.
+    dt_utc = datetime.fromtimestamp(hour_start_ts, tz=timezone.utc)
+    dt_ct = dt_utc.astimezone(CHICAGO_TZ)
+    return dt_ct.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def print_range_line(label, hour_start_ts):
+    # Печатаем одну границу диапазона сразу в UTC и CT.
+    if hour_start_ts is None:
+        print(f"{label}: None")
+        return
+
+    print(
+        f"{label}: "
+        f"UTC={format_utc_hour_start_ts(hour_start_ts)} | "
+        f"CT={format_ct_hour_start_ts_from_utc(hour_start_ts)}"
+    )
+
+
 def main():
     start_hour_ts = parse_optional_utc_hour_start_text(START_HOUR_TEXT)
     end_hour_ts = parse_optional_utc_hour_start_text(END_HOUR_TEXT)
@@ -46,8 +85,8 @@ def main():
     print(f"Инструмент: {INSTRUMENT_CODE}")
     print(f"price DB: {settings.price_db_path}")
     print(f"prepared DB: {settings.prepared_db_path}")
-    print(f"START_HOUR_TEXT: {START_HOUR_TEXT}")
-    print(f"END_HOUR_TEXT:   {END_HOUR_TEXT}")
+    print_range_line("START_HOUR_TEXT", start_hour_ts)
+    print_range_line("END_HOUR_TEXT", end_hour_ts)
     print("")
 
     stats = sync_prepared_hours_for_range(
