@@ -26,11 +26,9 @@ class PreparedSyncStats:
     skipped_invalid_hours: int
 
 
-
 def floor_to_hour_ts(ts):
     # Округляем Unix timestamp вниз до точного начала часа.
     return (ts // 3600) * 3600
-
 
 
 def load_candidate_hour_starts(price_conn, table_name, start_hour_ts=None, end_hour_ts=None):
@@ -66,7 +64,6 @@ def load_candidate_hour_starts(price_conn, table_name, start_hour_ts=None, end_h
     return [row[0] for row in rows]
 
 
-
 def build_recent_closed_hours_window(now_ts, lookback_days):
     # Строим окно последних закрытых часов.
     #
@@ -82,13 +79,12 @@ def build_recent_closed_hours_window(now_ts, lookback_days):
     return start_hour_ts, end_hour_ts
 
 
-
 def sync_prepared_hours_for_range(
-    settings,
-    instrument_code,
-    start_hour_ts=None,
-    end_hour_ts=None,
-    verbose=False,
+        settings,
+        instrument_code,
+        start_hour_ts=None,
+        end_hour_ts=None,
+        verbose=False,
 ):
     # Массовая синхронизация prepared DB по заданному окну.
     #
@@ -200,13 +196,12 @@ def sync_prepared_hours_for_range(
         prepared_conn.close()
 
 
-
 def sync_recent_prepared_hours(
-    settings,
-    instrument_code,
-    lookback_days=31,
-    now_ts=None,
-    verbose=False,
+        settings,
+        instrument_code,
+        lookback_days=31,
+        now_ts=None,
+        verbose=False,
 ):
     # Удобная обёртка для боевого режима.
     #

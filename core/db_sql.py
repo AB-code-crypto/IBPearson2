@@ -231,32 +231,31 @@ def upsert_ohlc_sql(table_name):
 def create_prepared_quotes_table_sql(table_name):
     # Таблица подготовленных данных для первого шага поиска паттернов.
     #
-    # Храним только то, что нужно для инкрементального Пирсона
-    # по историческим завершённым часам:
-    # - y
-    # - sum_y
-    # - sum_y2
+    # Храним:
+    # - hour_start_ts     : технический UTC-якорь часа
+    # - hour_start_ts_ct  : локальная числовая ось CT
+    # - hour_start_ct     : человекочитаемое CT-время
+    # - hour_slot_ct      : номер часа суток в CT
+    # - y / sum_y / sum_y2
     #
     # Один исторический час = 720 строк.
-    # Таблица находится в отдельной prepared DB, поэтому имя таблицы
-    # можно оставить таким же, как в price DB, например: MNQ_5s
-
     return f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
-        hour_start_ts INTEGER NOT NULL,
-        hour_start    TEXT NOT NULL,
-        hour_slot     INTEGER NOT NULL,
-        contract      TEXT NOT NULL,
+        hour_start_ts    INTEGER NOT NULL,
+        hour_start_ts_ct INTEGER NOT NULL,
+        hour_start_ct    TEXT NOT NULL,
+        hour_slot_ct     INTEGER NOT NULL,
+        contract         TEXT NOT NULL,
 
-        bar_index     INTEGER NOT NULL,
+        bar_index        INTEGER NOT NULL,
 
-        y             REAL NOT NULL,
-        sum_y         REAL NOT NULL,
-        sum_y2        REAL NOT NULL,
+        y                REAL NOT NULL,
+        sum_y            REAL NOT NULL,
+        sum_y2           REAL NOT NULL,
 
         PRIMARY KEY (hour_start_ts, bar_index),
 
-        CHECK (hour_slot >= 0 AND hour_slot < 24),
+        CHECK (hour_slot_ct >= 0 AND hour_slot_ct < 24),
         CHECK (bar_index >= 0 AND bar_index < 720)
     ) WITHOUT ROWID;
     """
@@ -266,15 +265,15 @@ def create_prepared_quotes_indexes_sql(table_name):
     # Дополнительные индексы для prepared-таблицы.
     #
     # Основной сценарий выборки:
-    # - найти все исторические часы конкретного часа суток (hour_slot)
-    # - затем читать их по времени
+    # - найти все исторические часы конкретного часа суток в CT (hour_slot_ct)
+    # - затем читать их по CT-времени
     #
     # По PRIMARY KEY(hour_start_ts, bar_index) отдельный индекс на hour_start_ts
     # не нужен: он уже покрывается началом первичного ключа.
     return [
         f"""
-        CREATE INDEX IF NOT EXISTS idx_{table_name}_hour_slot_hour_start_ts
-        ON {table_name}(hour_slot, hour_start_ts);
+        CREATE INDEX IF NOT EXISTS idx_{table_name}_hour_slot_ct_hour_start_ts_ct
+        ON {table_name}(hour_slot_ct, hour_start_ts_ct);
         """
     ]
 
@@ -299,15 +298,16 @@ def insert_prepared_quote_sql(table_name):
     return f"""
     INSERT INTO {table_name} (
         hour_start_ts,
-        hour_start,
-        hour_slot,
+        hour_start_ts_ct,
+        hour_start_ct,
+        hour_slot_ct,
         contract,
         bar_index,
         y,
         sum_y,
         sum_y2
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ;
     """
 
@@ -336,8 +336,9 @@ def select_prepared_hour_rows_sql(table_name):
     return f"""
     SELECT
         hour_start_ts,
-        hour_start,
-        hour_slot,
+        hour_start_ts_ct,
+        hour_start_ct,
+        hour_slot_ct,
         contract,
         bar_index,
         y,
@@ -351,30 +352,31 @@ def select_prepared_hour_rows_sql(table_name):
 
 
 def select_prepared_rows_by_slots_sql(table_name, slot_count):
-    # Все строки всех prepared-часов по списку hour_slot.
+    # Все строки всех prepared-часов по списку hour_slot_ct.
     #
     # Это основная быстрая выборка для runtime:
-    # одним запросом читаем все исторические часы нужных slot,
+    # одним запросом читаем все исторические часы нужных CT-slot,
     # затем группируем в Python по hour_start_ts.
     #
-    # before_hour_start_ts:
+    # before_hour_start_ts_ct:
     # - если NULL, ограничение не применяется
-    # - если задан, возвращаем только часы строго раньше него
+    # - если задан, возвращаем только часы строго раньше него по CT-оси
     placeholders = ", ".join(["?"] * slot_count)
 
     return f"""
     SELECT
         hour_start_ts,
-        hour_start,
-        hour_slot,
+        hour_start_ts_ct,
+        hour_start_ct,
+        hour_slot_ct,
         contract,
         bar_index,
         y,
         sum_y,
         sum_y2
     FROM {table_name}
-    WHERE hour_slot IN ({placeholders})
-      AND (? IS NULL OR hour_start_ts < ?)
-    ORDER BY hour_start_ts, bar_index
+    WHERE hour_slot_ct IN ({placeholders})
+      AND (? IS NULL OR hour_start_ts_ct < ?)
+    ORDER BY hour_start_ts_ct, bar_index
     ;
     """

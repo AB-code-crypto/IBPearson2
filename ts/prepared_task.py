@@ -7,6 +7,7 @@ from ts.prepared_sync import sync_recent_prepared_hours
 logger = get_logger(__name__)
 
 
+
 def next_prepared_sync_dt_utc(now_utc):
     # Возвращаем момент следующего запуска в hh:01:00 UTC.
     next_run_utc = now_utc.replace(minute=1, second=0, microsecond=0)
@@ -15,6 +16,7 @@ def next_prepared_sync_dt_utc(now_utc):
         next_run_utc += timedelta(hours=1)
 
     return next_run_utc
+
 
 
 def format_sync_window_text(stats):
@@ -69,18 +71,12 @@ async def run_prepared_sync_once(settings, instrument_code, lookback_days):
     return stats
 
 
-async def prepared_db_sync_task(
-        settings,
-        instrument_code="MNQ",
-        lookback_days=31,
-        run_immediately=True,
-):
+async def prepared_db_sync_task(settings, instrument_code="MNQ", lookback_days=31):
     # Фоновая задача синхронизации prepared DB.
     #
     # Сценарий:
-    # - если run_immediately=True, первый проход запускаем сразу;
-    # - если run_immediately=False, просто планируем следующий запуск в hh:01:00 UTC;
-    # - далее всегда работаем по расписанию hh:01:00 UTC.
+    # - первый проход запускаем сразу после старта задачи;
+    # - потом каждый час в hh:01:00 UTC.
     log_info(
         logger,
         f"Запуск фоновой синхронизации prepared DB для {instrument_code}",
@@ -88,12 +84,11 @@ async def prepared_db_sync_task(
     )
 
     try:
-        if run_immediately:
-            await run_prepared_sync_once(
-                settings=settings,
-                instrument_code=instrument_code,
-                lookback_days=lookback_days,
-            )
+        await run_prepared_sync_once(
+            settings=settings,
+            instrument_code=instrument_code,
+            lookback_days=lookback_days,
+        )
 
         while True:
             now_utc = datetime.now(timezone.utc)

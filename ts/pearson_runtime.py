@@ -2,6 +2,14 @@ from datetime import datetime, timezone
 from math import sqrt
 
 
+def text_from_local_axis_ts(local_axis_ts):
+    # Преобразуем локальную числовую ось проекта в читаемую строку.
+    #
+    # Здесь timezone.utc используется только как нейтральная ось вывода,
+    # чтобы получить текст "YYYY-MM-DD HH:MM:SS" для уже сдвинутого local ts.
+    return datetime.fromtimestamp(local_axis_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
 class PearsonCandidate:
     # Один исторический prepared-час, который участвует в сравнении
     # с текущим часом.
@@ -12,8 +20,9 @@ class PearsonCandidate:
     # - текущее runtime-состояние sum_xy и last_correlation.
     def __init__(self, prepared_hour_payload):
         self.hour_start_ts = prepared_hour_payload["hour_start_ts"]
-        self.hour_start = prepared_hour_payload["hour_start"]
-        self.hour_slot = prepared_hour_payload["hour_slot"]
+        self.hour_start_ts_ct = prepared_hour_payload["hour_start_ts_ct"]
+        self.hour_start_ct = prepared_hour_payload["hour_start_ct"]
+        self.hour_slot_ct = prepared_hour_payload["hour_slot_ct"]
         self.contract = prepared_hour_payload["contract"]
 
         self.y = prepared_hour_payload["y"]
@@ -73,18 +82,21 @@ class PearsonCurrentHour:
     # Runtime-состояние текущего часа.
     #
     # Здесь храним:
-    # - начало часа;
-    # - hour_slot;
+    # - технический UTC-якорь часа;
+    # - CT-время и CT-слот часа для стратегии;
     # - базовую цену mid_open_0;
     # - текущий ряд x;
     # - sum_x;
     # - sum_x2;
     # - список исторических кандидатов;
     # - флаг, что sum_xy уже инициализирован для кандидатов.
-    def __init__(self, hour_start_ts):
+    def __init__(self, hour_start_ts, hour_start_ts_ct):
         self.hour_start_ts = hour_start_ts
+        self.hour_start_ts_ct = hour_start_ts_ct
+
         self.hour_start = datetime.fromtimestamp(hour_start_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        self.hour_slot = datetime.fromtimestamp(hour_start_ts, tz=timezone.utc).hour
+        self.hour_start_ct = text_from_local_axis_ts(hour_start_ts_ct)
+        self.hour_slot_ct = (hour_start_ts_ct // 3600) % 24
 
         self.mid_open_0 = None
 
@@ -201,8 +213,9 @@ class PearsonCurrentHour:
             result.append(
                 {
                     "hour_start_ts": candidate.hour_start_ts,
-                    "hour_start": candidate.hour_start,
-                    "hour_slot": candidate.hour_slot,
+                    "hour_start_ts_ct": candidate.hour_start_ts_ct,
+                    "hour_start_ct": candidate.hour_start_ct,
+                    "hour_slot_ct": candidate.hour_slot_ct,
                     "contract": candidate.contract,
                     "correlation": correlation,
                 }

@@ -8,14 +8,13 @@ from core.db_sql import (
 
 
 def hour_start_text_from_ts(hour_start_ts):
-    # Преобразуем UTC timestamp начала часа в текстовый формат,
-    # который используем в prepared DB.
+    # UTC-текст часа для логов и диагностики.
     return datetime.fromtimestamp(hour_start_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def hour_slot_from_ts(hour_start_ts):
-    # Номер часа суток в UTC: 0..23
-    return datetime.fromtimestamp(hour_start_ts, tz=timezone.utc).hour
+def hour_slot_ct_from_ts_ct(hour_start_ts_ct):
+    # Номер часа суток на локальной CT-оси проекта: 0..23
+    return (hour_start_ts_ct // 3600) % 24
 
 
 def load_price_rows_for_one_hour(price_conn, table_name, hour_start_ts):
@@ -29,6 +28,8 @@ def load_price_rows_for_one_hour(price_conn, table_name, hour_start_ts):
     SELECT
         bar_time_ts,
         bar_time,
+        bar_time_ts_ct,
+        bar_time_ct,
         contract,
         ask_open,
         bid_open,
@@ -98,21 +99,11 @@ def build_prepared_rows(rows, hour_start_ts):
     # Формула:
     # y_i = mid_close_i / mid_open_0 - 1
     #
-    # где:
-    # mid_open_0  = (ask_open_0  + bid_open_0)  / 2
-    # mid_close_i = (ask_close_i + bid_close_i) / 2
-    #
-    # На выходе получаем строки для prepared-таблицы:
-    # (
-    #     hour_start_ts,
-    #     hour_start,
-    #     hour_slot,
-    #     contract,
-    #     bar_index,
-    #     y,
-    #     sum_y,
-    #     sum_y2,
-    # )
+    # В prepared DB храним:
+    # - hour_start_ts     как технический UTC-якорь
+    # - hour_start_ts_ct  как рабочую CT-ось стратегии
+    # - hour_start_ct     как человекочитаемое CT-время
+    # - hour_slot_ct      как номер часа суток в CT
     if not rows:
         raise ValueError("Нельзя построить prepared_rows: список rows пустой")
 
@@ -123,8 +114,9 @@ def build_prepared_rows(rows, hour_start_ts):
     if mid_open_0 == 0:
         raise ValueError("mid_open_0 == 0, деление невозможно")
 
-    hour_start_text = hour_start_text_from_ts(hour_start_ts)
-    hour_slot = hour_slot_from_ts(hour_start_ts)
+    hour_start_ts_ct = first_row["bar_time_ts_ct"]
+    hour_start_ct = first_row["bar_time_ct"]
+    hour_slot_ct = hour_slot_ct_from_ts_ct(hour_start_ts_ct)
     contract = first_row["contract"]
 
     prepared_rows = []
@@ -141,8 +133,9 @@ def build_prepared_rows(rows, hour_start_ts):
         prepared_rows.append(
             (
                 hour_start_ts,
-                hour_start_text,
-                hour_slot,
+                hour_start_ts_ct,
+                hour_start_ct,
+                hour_slot_ct,
                 contract,
                 bar_index,
                 y,

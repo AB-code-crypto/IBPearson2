@@ -24,8 +24,9 @@ def build_prepared_hour_payload(rows):
 
     payload = {
         "hour_start_ts": first_row["hour_start_ts"],
-        "hour_start": first_row["hour_start"],
-        "hour_slot": first_row["hour_slot"],
+        "hour_start_ts_ct": first_row["hour_start_ts_ct"],
+        "hour_start_ct": first_row["hour_start_ct"],
+        "hour_slot_ct": first_row["hour_slot_ct"],
         "contract": first_row["contract"],
         "y": [],
         "sum_y": [],
@@ -40,25 +41,18 @@ def build_prepared_hour_payload(rows):
     return payload
 
 
-def load_prepared_hours_by_slots(prepared_conn, table_name, hour_slots, before_hour_start_ts=None):
-    # Загружаем все prepared-часы для списка hour_slot одним SQL-запросом
+def load_prepared_hours_by_slots(prepared_conn, table_name, hour_slots_ct, before_hour_start_ts_ct=None):
+    # Загружаем все prepared-часы для списка CT-slot одним SQL-запросом
     # и группируем их в Python по hour_start_ts.
-    #
-    # hour_slots:
-    # - список допустимых hour_slot для поиска исторических кандидатов
-    #
-    # before_hour_start_ts:
-    # - если NULL, ограничение не применяется
-    # - если задан, возвращаем только часы строго раньше него
-    if not hour_slots:
+    if not hour_slots_ct:
         return []
 
     sql = select_prepared_rows_by_slots_sql(
         table_name=table_name,
-        slot_count=len(hour_slots),
+        slot_count=len(hour_slots_ct),
     )
 
-    params = [*hour_slots, before_hour_start_ts, before_hour_start_ts]
+    params = [*hour_slots_ct, before_hour_start_ts_ct, before_hour_start_ts_ct]
 
     cursor = prepared_conn.execute(sql, params)
     rows = cursor.fetchall()

@@ -18,8 +18,9 @@ from ts.ts_time import resolve_allowed_hour_slots
 class PearsonLiveSnapshot:
     # Снимок текущего состояния live-runtime первого шага Пирсона.
     hour_start_ts: Optional[int]
-    hour_start: Optional[str]
-    hour_slot: Optional[int]
+    hour_start_ts_ct: Optional[int]
+    hour_start_ct: Optional[str]
+    hour_slot_ct: Optional[int]
 
     last_bar_time_ts: Optional[int]
     current_bar_count: int
@@ -89,29 +90,30 @@ class PearsonLiveRuntime:
         #
         # Ожидаем bar как mapping с ключами:
         # - bar_time_ts
+        # - bar_time_ts_ct
         # - ask_open
         # - bid_open
         # - ask_close
         # - bid_close
-        #
-        # Важно:
-        # bar_time_ts должен иметь тот же смысл, что и в price DB,
-        # то есть timestamp самого 5-секундного бара.
         bar_time_ts = bar["bar_time_ts"]
+        bar_time_ts_ct = bar["bar_time_ts_ct"]
+
         bar_hour_start_ts = floor_to_hour_ts(bar_time_ts)
+        bar_hour_start_ts_ct = floor_to_hour_ts(bar_time_ts_ct)
 
         if self.current_hour is None:
-            self._start_new_hour(bar_hour_start_ts)
+            self._start_new_hour(bar_hour_start_ts, bar_hour_start_ts_ct)
 
-        elif bar_hour_start_ts < self.current_hour.hour_start_ts:
+        elif bar_hour_start_ts_ct < self.current_hour.hour_start_ts_ct:
             raise ValueError(
                 f"Получен бар из прошлого часа: "
                 f"bar_time_ts={bar_time_ts}, "
-                f"current_hour_start_ts={self.current_hour.hour_start_ts}"
+                f"bar_time_ts_ct={bar_time_ts_ct}, "
+                f"current_hour_start_ts_ct={self.current_hour.hour_start_ts_ct}"
             )
 
-        elif bar_hour_start_ts > self.current_hour.hour_start_ts:
-            self._start_new_hour(bar_hour_start_ts)
+        elif bar_hour_start_ts_ct > self.current_hour.hour_start_ts_ct:
+            self._start_new_hour(bar_hour_start_ts, bar_hour_start_ts_ct)
 
         self._append_bar_to_current_hour(bar)
 
@@ -141,16 +143,16 @@ class PearsonLiveRuntime:
         # Возвращаем последний уже построенный snapshot.
         return self.last_snapshot
 
-    def _start_new_hour(self, hour_start_ts):
+    def _start_new_hour(self, hour_start_ts, hour_start_ts_ct):
         # Полностью переключаем runtime на новый час.
-        self.current_hour = PearsonCurrentHour(hour_start_ts)
+        self.current_hour = PearsonCurrentHour(hour_start_ts, hour_start_ts_ct)
         self.current_hour_valid = True
         self.current_hour_invalid_reason = None
         self.current_hour_last_bar_time_ts = None
         self.current_hour_expected_next_bar_time_ts = hour_start_ts
 
         self.allowed_hour_slots = resolve_allowed_hour_slots(
-            self.current_hour.hour_slot
+            self.current_hour.hour_slot_ct
         )
 
         prepared_hours = self._load_candidates_for_current_hour()
@@ -171,8 +173,8 @@ class PearsonLiveRuntime:
             prepared_hours = load_prepared_hours_by_slots(
                 prepared_conn=prepared_conn,
                 table_name=self.table_name,
-                hour_slots=self.allowed_hour_slots,
-                before_hour_start_ts=self.current_hour.hour_start_ts,
+                hour_slots_ct=self.allowed_hour_slots,
+                before_hour_start_ts_ct=self.current_hour.hour_start_ts_ct,
             )
 
             return prepared_hours
@@ -275,8 +277,9 @@ class PearsonLiveRuntime:
         # Пустой snapshot для состояния "ещё ни одного бара не было".
         return PearsonLiveSnapshot(
             hour_start_ts=None,
-            hour_start=None,
-            hour_slot=None,
+            hour_start_ts_ct=None,
+            hour_start_ct=None,
+            hour_slot_ct=None,
             last_bar_time_ts=None,
             current_bar_count=0,
             current_bar_index=None,
@@ -300,8 +303,9 @@ class PearsonLiveRuntime:
 
         return PearsonLiveSnapshot(
             hour_start_ts=self.current_hour.hour_start_ts,
-            hour_start=self.current_hour.hour_start,
-            hour_slot=self.current_hour.hour_slot,
+            hour_start_ts_ct=self.current_hour.hour_start_ts_ct,
+            hour_start_ct=self.current_hour.hour_start_ct,
+            hour_slot_ct=self.current_hour.hour_slot_ct,
             last_bar_time_ts=self.current_hour_last_bar_time_ts,
             current_bar_count=self.current_hour.current_n(),
             current_bar_index=self.current_hour.current_bar_index(),
