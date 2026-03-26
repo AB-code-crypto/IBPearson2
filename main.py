@@ -23,6 +23,8 @@ from core.logger import (
 )
 from ts.prepared_task import prepared_db_sync_task, run_prepared_sync_once
 from ts.pearson_live import PearsonLiveRuntime
+from trading.order_service import OrderService
+from trading.decision_order_executor import DecisionOrderExecutor
 
 # Настраиваем логирование один раз при старте приложения.
 setup_logging()
@@ -46,8 +48,10 @@ async def main():
     realtime_task = None
     prepared_sync_task = None
 
-    # Runtime первого шага стратегии.
+    # Runtime стратегии и торгового контура.
     pearson_live_runtime = None
+    order_service = None
+    decision_order_executor = None
 
     # Простое состояние разового добора последнего часа после старта realtime
     # и после последующих реконнектов.
@@ -105,11 +109,24 @@ async def main():
             lookback_days=31,
         )
 
-        # Создаём live-runtime первого шага стратегии.
+        # Создаём live-runtime стратегии.
         pearson_live_runtime = PearsonLiveRuntime(
             settings=settings,
             instrument_code="MNQ",
         )
+
+        # Создаём торговый сервис и исполнитель решений.
+        order_service = OrderService(ib)
+        decision_order_executor = DecisionOrderExecutor(
+            settings=settings,
+            order_service=order_service,
+            instrument_code="MNQ",
+        )
+
+        if settings.trading_enable_order_execution:
+            log_info(logger, "Торговое исполнение включено", to_telegram=True)
+        else:
+            log_info(logger, "Торговое исполнение выключено", to_telegram=False)
 
         # Потом переходим на реальные котировки.
         realtime_task = asyncio.create_task(
@@ -120,6 +137,7 @@ async def main():
                 active_futures=active_futures,
                 recent_backfill_state=recent_backfill_state,
                 pearson_live_runtime=pearson_live_runtime,
+                decision_order_executor=decision_order_executor,
             )
         )
 

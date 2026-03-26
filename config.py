@@ -28,6 +28,32 @@ class Settings:
     telegram_chat_id_promo: int = -1003392998188  # промо группа        -       ФинтехПравда
     telegram_thread_id_promo: int = 34  # тема в промо группе           -       ФинтехПравда/Сигналы в IB
 
+    # ==============================
+    # Торговое исполнение
+    # ==============================
+
+    # Предохранитель.
+    # Пока False, торговый контур только считает сигналы, но реальные заявки не отправляет.
+    trading_enable_order_execution: bool = True
+
+    # Сейчас торгуем только MNQ одним контрактом.
+    trading_order_quantity: int = 1
+
+    # Выход за 10 секунд до конца часа.
+    # Для 5-секундных баров это бар со стартом 59:45 и закрытием 59:50,
+    # то есть bar_index = 717.
+    trading_exit_bar_index: int = 717
+
+    # Префикс для orderRef в IB.
+    trading_order_ref_prefix: str = "IBP2"
+
+    # TIF для market-ордеров.
+    trading_order_time_in_force: str = "DAY"
+
+    # Таймауты ожидания постановки/исполнения.
+    trading_accept_timeout_seconds: float = 5.0
+    trading_done_timeout_seconds: float = 60.0
+
 
 # Набор настроек для "боевого" подключения.
 settings_live = Settings()

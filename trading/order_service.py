@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, Optional
 
-from ib_insync import IB, Contract, Fill, CommissionReport, Trade, Future, Stock, Forex  # type: ignore
+from ib_async import IB, Contract, Fill, CommissionReport, Trade, Future, Stock, Forex
 
 from trading.ib_order_api import IBOrderApi, PlaceOrderReceipt, CancelOrderReceipt, BracketOrders
 from trading.order_monitor import OrderMonitor, AcceptanceResult, DoneResult, IBError
@@ -502,7 +502,7 @@ class OrderService:
     @staticmethod
     def _collect_fill_infos(fills: list[Fill]) -> list[TradeFillInfo]:
         """
-        Преобразовать ib_insync Fill -> TradeFillInfo (детализация исполнений).
+        Преобразовать ib_async Fill -> TradeFillInfo (детализация исполнений).
 
         Важно:
           - CommissionReport может приходить не сразу, поэтому поля commission/realized_pnl могут быть None.

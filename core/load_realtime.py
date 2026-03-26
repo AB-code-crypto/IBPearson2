@@ -642,6 +642,49 @@ def maybe_feed_pearson_live(
         del pending_bars[stale_bar_time_ts]
 
 
+def maybe_schedule_decision_order_executor(
+        decision_order_executor,
+        decision_order_state,
+        pearson_live_runtime,
+        active_futures,
+):
+    # После каждого закрытого бара пробуем передать свежий snapshot
+    # в торговый контур.
+    #
+    # Чтобы не плодить конкурентные вызовы, держим не больше одной
+    # активной задачи исполнения одновременно.
+    if decision_order_executor is None:
+        return
+
+    if pearson_live_runtime is None:
+        return
+
+    snapshot = pearson_live_runtime.get_last_snapshot()
+
+    if snapshot is None:
+        return
+
+    current_task = decision_order_state["task"]
+
+    if current_task is not None and not current_task.done():
+        return
+
+    async def runner():
+        try:
+            await decision_order_executor.on_snapshot(
+                snapshot=snapshot,
+                active_futures=active_futures,
+            )
+        except Exception as exc:
+            log_warning(
+                logger,
+                f"Ошибка в decision_order_executor: {exc}\n{traceback.format_exc()}",
+                to_telegram=True,
+            )
+
+    decision_order_state["task"] = asyncio.create_task(runner())
+
+
 def build_realtime_update_handler(
         ib,
         ib_health,
@@ -651,6 +694,9 @@ def build_realtime_update_handler(
         recent_backfill_state,
         pearson_live_runtime,
         pearson_live_state,
+        decision_order_executor,
+        decision_order_state,
+        active_futures,
         contract,
         what_to_show,
         conn,
@@ -714,6 +760,13 @@ def build_realtime_update_handler(
                 bar=bar,
             )
 
+            maybe_schedule_decision_order_executor(
+                decision_order_executor=decision_order_executor,
+                decision_order_state=decision_order_state,
+                pearson_live_runtime=pearson_live_runtime,
+                active_futures=active_futures,
+            )
+
         except Exception as exc:
             log_warning(
                 logger,
@@ -733,6 +786,7 @@ async def load_realtime_task(
         active_futures,
         recent_backfill_state,
         pearson_live_runtime=None,
+        decision_order_executor=None,
 ):
     # Текущая realtime-версия loader-а:
     # - берём один активный контракт из ACTIVE_FUTURES;
@@ -759,6 +813,10 @@ async def load_realtime_task(
     pearson_live_state = {
         "pending_bars": {},
         "last_emitted_bar_time_ts": None,
+    }
+
+    decision_order_state = {
+        "task": None,
     }
 
     # Храним все открытые подписки и их обработчики,
@@ -806,6 +864,9 @@ async def load_realtime_task(
                 recent_backfill_state=recent_backfill_state,
                 pearson_live_runtime=pearson_live_runtime,
                 pearson_live_state=pearson_live_state,
+                decision_order_executor=decision_order_executor,
+                decision_order_state=decision_order_state,
+                active_futures=active_futures,
                 contract=contract,
                 what_to_show=what_to_show,
                 conn=db_conn,

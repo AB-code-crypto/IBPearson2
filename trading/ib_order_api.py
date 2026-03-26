@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Mapping, Optional, Sequence
 
-from ib_insync import IB, Contract, Trade
-from ib_insync.order import (
+from ib_async import (
+    IB,
+    Contract,
+    Trade,
     Order,
     MarketOrder,
     LimitOrder,
@@ -56,7 +58,7 @@ class BracketOrders:
 
 class IBOrderApi:
     """
-    Тонкий API-адаптер для IB (ib_insync).
+    Тонкий API-адаптер для IB (ib_async).
 
     Принципы:
       - Только сборка ордеров + placeOrder/cancelOrder.
@@ -276,7 +278,7 @@ class IBOrderApi:
         """
         Trailing Stop (orderType="TRAIL").
 
-        В вашей версии ib_insync нет TrailingStopOrder, поэтому собираем через базовый Order.
+        В используемой версии ib_async нет отдельного TrailingStopOrder, поэтому собираем через базовый Order.
         Тонкие параметры (как именно биржа/маршрут интерпретирует auxPrice/trailStopPrice)
         можно уточнять/переопределять через order_kwargs.
         """

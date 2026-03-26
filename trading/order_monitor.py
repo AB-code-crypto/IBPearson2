@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from ib_insync import IB, Trade
+from ib_async import IB, Trade
 
 log = logging.getLogger(__name__)
 
@@ -124,11 +124,11 @@ class OrderMonitor:
         log.warning("IB error: id=%s code=%s msg=%s", req_id, code, msg)
 
     async def wait_for_accept(
-        self,
-        trade: Trade,
-        *,
-        timeout: float = 5.0,
-        poll_interval: float = 0.10,
+            self,
+            trade: Trade,
+            *,
+            timeout: float = 5.0,
+            poll_interval: float = 0.10,
     ) -> AcceptanceResult:
         """
         Ждём подтверждение постановки (accept) без ожидания исполнения.
@@ -183,11 +183,11 @@ class OrderMonitor:
             await asyncio.sleep(float(poll_interval))
 
     async def wait_for_done(
-        self,
-        trade: Trade,
-        *,
-        timeout: float = 60.0,
-        poll_interval: float = 0.10,
+            self,
+            trade: Trade,
+            *,
+            timeout: float = 60.0,
+            poll_interval: float = 0.10,
     ) -> DoneResult:
         """
         Ждём терминал trade.isDone() / статус в _TERMINAL_STATUSES.
