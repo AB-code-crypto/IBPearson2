@@ -502,6 +502,14 @@ def format_forecast_summary_text(forecast_summary):
     )
 
 
+def format_decision_result_text(decision_result):
+    # Формируем короткий текст по decision layer.
+    return (
+        f"{decision_result['decision']} | "
+        f"{decision_result['reason']}"
+    )
+
+
 def maybe_log_pearson_live_snapshot(pearson_live_runtime):
     # Пишем короткую диагностику live-runtime после каждого расчётного бара.
     if pearson_live_runtime is None:
@@ -541,6 +549,13 @@ def maybe_log_pearson_live_snapshot(pearson_live_runtime):
         else:
             forecast_text = "нет forecast summary"
 
+    decision_text = "решение не считалось"
+    if snapshot.decision_calculated:
+        if snapshot.decision_result is not None:
+            decision_text = format_decision_result_text(snapshot.decision_result)
+        else:
+            decision_text = "нет decision_result"
+
     log_info(
         logger,
         (
@@ -553,7 +568,8 @@ def maybe_log_pearson_live_snapshot(pearson_live_runtime):
             f"similarity={len(snapshot.ranked_similarity_candidates)} | "
             f"best_pearson={pearson_leader_text} | "
             f"best_similarity={similarity_leader_text} | "
-            f"forecast={forecast_text}"
+            f"forecast={forecast_text} | "
+            f"decision={decision_text}"
         ),
         to_telegram=False,
     )

@@ -4,6 +4,7 @@ from typing import Optional
 
 from contracts import Instrument
 from core.db_initializer import build_table_name
+from ts.candidate_decision import evaluate_decision_layer
 from ts.candidate_forecast import build_group_forecast_from_prepared_candidates
 from ts.pearson_runtime import PearsonCurrentHour
 from ts.candidate_scoring import rank_prepared_candidates_by_similarity
@@ -45,10 +46,12 @@ class PearsonLiveSnapshot:
     correlation_calculated: bool
     similarity_calculated: bool
     forecast_calculated: bool
+    decision_calculated: bool
 
     ranked_candidates: list[dict]
     ranked_similarity_candidates: list[dict]
     forecast_summary: Optional[dict]
+    decision_result: Optional[dict]
 
 
 def floor_to_hour_ts(ts):
@@ -136,9 +139,11 @@ class PearsonLiveRuntime:
         correlation_calculated = False
         similarity_calculated = False
         forecast_calculated = False
+        decision_calculated = False
         ranked_candidates = []
         ranked_similarity_candidates = []
         forecast_summary = None
+        decision_result = None
 
         if self.current_hour_valid and self._is_search_window_active():
             if not self.current_hour.candidates_initialized:
@@ -162,13 +167,21 @@ class PearsonLiveRuntime:
             )
             forecast_calculated = True
 
+            decision_result = self._build_decision_result(
+                ranked_similarity_candidates=ranked_similarity_candidates,
+                forecast_summary=forecast_summary,
+            )
+            decision_calculated = True
+
         self.last_snapshot = self._build_snapshot(
             correlation_calculated=correlation_calculated,
             similarity_calculated=similarity_calculated,
             forecast_calculated=forecast_calculated,
+            decision_calculated=decision_calculated,
             ranked_candidates=ranked_candidates,
             ranked_similarity_candidates=ranked_similarity_candidates,
             forecast_summary=forecast_summary,
+            decision_result=decision_result,
         )
 
         return self.last_snapshot
@@ -292,6 +305,13 @@ class PearsonLiveRuntime:
 
         return forecast_summary
 
+    def _build_decision_result(self, ranked_similarity_candidates, forecast_summary):
+        # Строим formal decision layer поверх similarity и forecast.
+        return evaluate_decision_layer(
+            ranked_similarity_candidates=ranked_similarity_candidates,
+            forecast_summary=forecast_summary,
+        )
+
     def _append_bar_to_current_hour(self, bar):
         # Добавляем очередной бар в текущий runtime-час.
         #
@@ -405,9 +425,11 @@ class PearsonLiveRuntime:
             correlation_calculated=False,
             similarity_calculated=False,
             forecast_calculated=False,
+            decision_calculated=False,
             ranked_candidates=[],
             ranked_similarity_candidates=[],
             forecast_summary=None,
+            decision_result=None,
         )
 
     def _build_snapshot(
@@ -415,9 +437,11 @@ class PearsonLiveRuntime:
             correlation_calculated,
             similarity_calculated,
             forecast_calculated,
+            decision_calculated,
             ranked_candidates,
             ranked_similarity_candidates,
             forecast_summary,
+            decision_result,
     ):
         # Собираем snapshot по текущему активному часу.
         if self.current_hour is None:
@@ -443,7 +467,9 @@ class PearsonLiveRuntime:
             correlation_calculated=correlation_calculated,
             similarity_calculated=similarity_calculated,
             forecast_calculated=forecast_calculated,
+            decision_calculated=decision_calculated,
             ranked_candidates=ranked_candidates,
             ranked_similarity_candidates=ranked_similarity_candidates,
             forecast_summary=forecast_summary,
+            decision_result=decision_result,
         )
