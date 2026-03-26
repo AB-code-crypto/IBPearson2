@@ -1,0 +1,247 @@
+from ts.candidate_features import (
+    build_first_diff,
+    calc_mean_abs_diff,
+    calc_net_move,
+    calc_path_efficiency,
+    calc_pearson_corr,
+    calc_range,
+)
+from ts.ts_config import (
+    SIMILARITY_EFFICIENCY_DISTANCE_ZERO_AT,
+    SIMILARITY_MEAN_ABS_DIFF_DISTANCE_ZERO_AT,
+    SIMILARITY_NET_MOVE_DISTANCE_ZERO_AT,
+    SIMILARITY_PEARSON_SCORE_ONE_AT,
+    SIMILARITY_PEARSON_SCORE_ZERO_AT,
+    SIMILARITY_RANGE_DISTANCE_ZERO_AT,
+    SIMILARITY_WEIGHT_EFFICIENCY,
+    SIMILARITY_WEIGHT_MEAN_ABS_DIFF,
+    SIMILARITY_WEIGHT_NET_MOVE,
+    SIMILARITY_WEIGHT_PEARSON,
+    SIMILARITY_WEIGHT_RANGE,
+)
+
+
+def calc_relative_distance(value_a, value_b, eps=1e-12):
+    # Относительное отличие двух значений.
+    #
+    # Формула:
+    # abs(a - b) / max(abs(a), abs(b), eps)
+    denominator = max(abs(value_a), abs(value_b), eps)
+    return abs(value_a - value_b) / denominator
+
+
+def calc_score_from_value(value, score_zero_at, score_one_at):
+    # Переводим "чем больше, тем лучше" в score 0..1.
+    #
+    # Логика:
+    # - value <= score_zero_at -> 0
+    # - value >= score_one_at  -> 1
+    # - между ними линейная интерполяция
+    if score_one_at <= score_zero_at:
+        raise ValueError("score_one_at должен быть строго больше score_zero_at")
+
+    if value <= score_zero_at:
+        return 0.0
+
+    if value >= score_one_at:
+        return 1.0
+
+    return (value - score_zero_at) / (score_one_at - score_zero_at)
+
+
+def calc_score_from_distance(distance, distance_zero_at):
+    # Переводим "чем меньше, тем лучше" в score 0..1.
+    #
+    # Логика:
+    # - distance <= 0                -> 1
+    # - distance >= distance_zero_at -> 0
+    # - между ними линейная интерполяция
+    if distance_zero_at <= 0.0:
+        raise ValueError("distance_zero_at должен быть > 0")
+
+    if distance <= 0.0:
+        return 1.0
+
+    if distance >= distance_zero_at:
+        return 0.0
+
+    return 1.0 - (distance / distance_zero_at)
+
+
+def calc_weighted_average_score(score_items):
+    # Считаем взвешенное среднее.
+    #
+    # score_items:
+    # [
+    #   (score_value, weight_value),
+    #   ...
+    # ]
+    weighted_sum = 0.0
+    total_weight = 0.0
+
+    for score_value, weight_value in score_items:
+        weighted_sum += score_value * weight_value
+        total_weight += weight_value
+
+    if total_weight == 0.0:
+        return 0.0
+
+    return weighted_sum / total_weight
+
+
+def build_similarity_features(values):
+    # Строим набор низкоуровневых признаков участка.
+    diff_values = build_first_diff(values)
+
+    return {
+        "range": calc_range(values),
+        "net_move": calc_net_move(values),
+        "mean_abs_diff": calc_mean_abs_diff(diff_values),
+        "path_efficiency": calc_path_efficiency(values),
+    }
+
+
+def evaluate_similarity_between_prefixes(current_values, candidate_values):
+    # Сравниваем два префикса и считаем все расстояния, score и итоговый результат.
+    if len(current_values) != len(candidate_values):
+        raise ValueError(
+            f"Длины префиксов не совпадают: "
+            f"len(current_values)={len(current_values)}, "
+            f"len(candidate_values)={len(candidate_values)}"
+        )
+
+    pearson = calc_pearson_corr(current_values, candidate_values)
+
+    if pearson is None:
+        return None
+
+    current_features = build_similarity_features(current_values)
+    candidate_features = build_similarity_features(candidate_values)
+
+    range_distance = calc_relative_distance(
+        current_features["range"],
+        candidate_features["range"],
+    )
+    net_move_distance = calc_relative_distance(
+        current_features["net_move"],
+        candidate_features["net_move"],
+    )
+    mean_abs_diff_distance = calc_relative_distance(
+        current_features["mean_abs_diff"],
+        candidate_features["mean_abs_diff"],
+    )
+    efficiency_distance = calc_relative_distance(
+        current_features["path_efficiency"],
+        candidate_features["path_efficiency"],
+    )
+
+    pearson_score = calc_score_from_value(
+        value=pearson,
+        score_zero_at=SIMILARITY_PEARSON_SCORE_ZERO_AT,
+        score_one_at=SIMILARITY_PEARSON_SCORE_ONE_AT,
+    )
+    range_score = calc_score_from_distance(
+        distance=range_distance,
+        distance_zero_at=SIMILARITY_RANGE_DISTANCE_ZERO_AT,
+    )
+    net_move_score = calc_score_from_distance(
+        distance=net_move_distance,
+        distance_zero_at=SIMILARITY_NET_MOVE_DISTANCE_ZERO_AT,
+    )
+    mean_abs_diff_score = calc_score_from_distance(
+        distance=mean_abs_diff_distance,
+        distance_zero_at=SIMILARITY_MEAN_ABS_DIFF_DISTANCE_ZERO_AT,
+    )
+    efficiency_score = calc_score_from_distance(
+        distance=efficiency_distance,
+        distance_zero_at=SIMILARITY_EFFICIENCY_DISTANCE_ZERO_AT,
+    )
+
+    final_score = calc_weighted_average_score(
+        [
+            (pearson_score, SIMILARITY_WEIGHT_PEARSON),
+            (range_score, SIMILARITY_WEIGHT_RANGE),
+            (net_move_score, SIMILARITY_WEIGHT_NET_MOVE),
+            (mean_abs_diff_score, SIMILARITY_WEIGHT_MEAN_ABS_DIFF),
+            (efficiency_score, SIMILARITY_WEIGHT_EFFICIENCY),
+        ]
+    )
+
+    return {
+        "pearson": pearson,
+
+        "current_range": current_features["range"],
+        "candidate_range": candidate_features["range"],
+        "range_distance": range_distance,
+
+        "current_net_move": current_features["net_move"],
+        "candidate_net_move": candidate_features["net_move"],
+        "net_move_distance": net_move_distance,
+
+        "current_mean_abs_diff": current_features["mean_abs_diff"],
+        "candidate_mean_abs_diff": candidate_features["mean_abs_diff"],
+        "mean_abs_diff_distance": mean_abs_diff_distance,
+
+        "current_path_efficiency": current_features["path_efficiency"],
+        "candidate_path_efficiency": candidate_features["path_efficiency"],
+        "efficiency_distance": efficiency_distance,
+
+        "pearson_score": pearson_score,
+        "range_score": range_score,
+        "net_move_score": net_move_score,
+        "mean_abs_diff_score": mean_abs_diff_score,
+        "efficiency_score": efficiency_score,
+
+        "final_score": final_score,
+    }
+
+
+def evaluate_prepared_candidate_similarity(current_values, prepared_hour_payload):
+    # Считаем score похожести для одного prepared-кандидата.
+    candidate_values = prepared_hour_payload["y"][: len(current_values)]
+
+    result = evaluate_similarity_between_prefixes(
+        current_values=current_values,
+        candidate_values=candidate_values,
+    )
+
+    if result is None:
+        return None
+
+    result.update(
+        {
+            "hour_start_ts": prepared_hour_payload["hour_start_ts"],
+            "hour_start_ts_ct": prepared_hour_payload["hour_start_ts_ct"],
+            "hour_start_ct": prepared_hour_payload["hour_start_ct"],
+            "hour_slot_ct": prepared_hour_payload["hour_slot_ct"],
+            "contract": prepared_hour_payload["contract"],
+        }
+    )
+
+    return result
+
+
+def rank_prepared_candidates_by_similarity(current_values, prepared_hours, min_required_pearson=None):
+    # Считаем score похожести для списка prepared-кандидатов и сортируем их.
+    ranked = []
+
+    for prepared_hour_payload in prepared_hours:
+        item = evaluate_prepared_candidate_similarity(
+            current_values=current_values,
+            prepared_hour_payload=prepared_hour_payload,
+        )
+
+        if item is None:
+            continue
+
+        if min_required_pearson is not None and item["pearson"] < min_required_pearson:
+            continue
+
+        ranked.append(item)
+
+    ranked.sort(
+        key=lambda item: (item["final_score"], item["pearson"]),
+        reverse=True,
+    )
+
+    return ranked

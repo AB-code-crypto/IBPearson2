@@ -35,7 +35,7 @@ from ts.ts_time import resolve_allowed_hour_slots
 INSTRUMENT_CODE = "MNQ"
 
 # Исторический уже закрытый час, который хотим прогнать как будто в realtime.
-CURRENT_HOUR_START_TEXT = "2026-03-19 18:00:00"
+CURRENT_HOUR_START_TEXT = "2026-03-17 13:00:00"
 
 # После 360 баров (30 минут) начинаем сравнение.
 MIN_BARS_TO_START = 360
