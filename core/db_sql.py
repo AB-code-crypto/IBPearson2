@@ -380,3 +380,168 @@ def select_prepared_rows_by_slots_sql(table_name, slot_count):
     ORDER BY hour_start_ts_ct, bar_index
     ;
     """
+
+
+def create_trades_table_sql():
+    # Главная таблица истории сделок.
+    #
+    # Одна строка = одна сделка стратегии от появления сигнала
+    # до полного закрытия позиции.
+    return """
+           CREATE TABLE IF NOT EXISTS trades
+           (
+               trade_id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+
+               instrument_code            TEXT    NOT NULL,
+               contract_local_symbol      TEXT,
+
+               side                       TEXT    NOT NULL,
+               quantity                   INTEGER NOT NULL,
+
+               status                     TEXT    NOT NULL,
+
+               signal_hour_start_ts       INTEGER,
+               signal_hour_start_ts_ct    INTEGER,
+               signal_hour_start_ct       TEXT,
+
+               signal_bar_index           INTEGER,
+               signal_bar_time_ts         INTEGER,
+               signal_bar_time_ts_ct      INTEGER,
+               signal_bar_time_ct         TEXT,
+
+               decision                   TEXT,
+               decision_reason            TEXT,
+
+               best_similarity_score      REAL,
+
+               forecast_direction         TEXT,
+               forecast_candidate_count   INTEGER,
+               forecast_positive_ratio    REAL,
+               forecast_negative_ratio    REAL,
+               forecast_mean_final_move   REAL,
+               forecast_median_final_move REAL,
+
+               decision_payload_json      TEXT,
+               forecast_summary_json      TEXT,
+
+               entry_submitted_ts         INTEGER,
+               entry_submitted_time       TEXT,
+               entry_order_id             INTEGER,
+               entry_perm_id              INTEGER,
+
+               entry_filled_ts            INTEGER,
+               entry_filled_time          TEXT,
+               entry_avg_fill_price       REAL,
+
+               exit_submitted_ts          INTEGER,
+               exit_submitted_time        TEXT,
+               exit_order_id              INTEGER,
+               exit_perm_id               INTEGER,
+
+               exit_filled_ts             INTEGER,
+               exit_filled_time           TEXT,
+               exit_avg_fill_price        REAL,
+
+               commissions_total          REAL    NOT NULL DEFAULT 0,
+               realized_pnl               REAL,
+
+               error_text                 TEXT,
+
+               created_at                 TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               updated_at                 TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+           ); \
+           """
+
+
+def create_trade_events_table_sql():
+    # Журнал событий по сделкам.
+    #
+    # Одна строка = одно важное событие:
+    # - сигнал появился
+    # - ордер отправлен
+    # - ордер исполнен
+    # - сделка подхвачена после рестарта
+    # - ошибка / рассинхрон / принудительное закрытие
+    return """
+           CREATE TABLE IF NOT EXISTS trade_events
+           (
+               event_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+
+               trade_id        INTEGER,
+               instrument_code TEXT    NOT NULL,
+
+               event_type      TEXT    NOT NULL,
+               event_time_ts   INTEGER NOT NULL,
+               event_time      TEXT    NOT NULL,
+
+               message         TEXT,
+               payload_json    TEXT,
+
+               created_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+               FOREIGN KEY (trade_id) REFERENCES trades (trade_id)
+           ); \
+           """
+
+
+def create_trade_runtime_state_table_sql():
+    # Таблица текущего торгового состояния.
+    #
+    # Здесь не история, а только "что робот считает текущим состоянием
+    # по каждому инструменту" на данный момент.
+    #
+    # Одна строка = один инструмент.
+    return """
+           CREATE TABLE IF NOT EXISTS trade_runtime_state
+           (
+               instrument_code        TEXT PRIMARY KEY,
+
+               current_trade_id       INTEGER,
+
+               position_side          TEXT,
+               position_qty           INTEGER NOT NULL DEFAULT 0,
+
+               entry_hour_start_ts    INTEGER,
+               entry_hour_start_ts_ct INTEGER,
+               entry_hour_start_ct    TEXT,
+
+               broker_position_qty    INTEGER NOT NULL DEFAULT 0,
+               broker_avg_cost        REAL,
+
+               last_decision          TEXT,
+               last_decision_reason   TEXT,
+
+               last_snapshot_time_ts  INTEGER,
+               last_snapshot_time     TEXT,
+
+               updated_at             TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+               FOREIGN KEY (current_trade_id) REFERENCES trades (trade_id)
+           ) WITHOUT ROWID; \
+           """
+
+
+def create_trade_indexes_sql():
+    # Индексы торговой БД.
+    return [
+        """
+        CREATE INDEX IF NOT EXISTS idx_trades_status
+            ON trades (status);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_trades_instrument_status
+            ON trades (instrument_code, status);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_trades_signal_hour_start_ts
+            ON trades (signal_hour_start_ts);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_trade_events_trade_id
+            ON trade_events (trade_id);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_trade_events_instrument_time
+            ON trade_events (instrument_code, event_time_ts);
+        """,
+    ]

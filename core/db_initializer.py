@@ -5,7 +5,7 @@ from core.logger import get_logger, log_info
 from core.db_sql import (
     create_quotes_table_sql,
     create_prepared_quotes_table_sql,
-    create_prepared_quotes_indexes_sql,
+    create_prepared_quotes_indexes_sql, create_trades_table_sql, create_trade_events_table_sql, create_trade_runtime_state_table_sql, create_trade_indexes_sql,
 )
 
 logger = get_logger(__name__)
@@ -34,7 +34,7 @@ def build_table_name(instrument_code, bar_size_setting):
 def create_db_objects_if_missing(db_path, sql_list):
     # Выполняем набор CREATE-операторов в одной транзакции.
     #
-    # Подходит и для одной таблицы, и для таблицы + индексов.
+    # Подходит и для одной таблицы, и для таблицы + индекс(ов).
     # Если файл БД ещё не существует, SQLite создаст его автоматически
     # при первом подключении.
     conn = sqlite3.connect(db_path)
@@ -104,15 +104,40 @@ def initialize_prepared_database(settings):
         )
 
 
+def initialize_trade_database(settings):
+    # Создаём торговую БД.
+    #
+    # В одной БД храним:
+    # - trades               : полную историю сделок;
+    # - trade_events         : журнал событий по сделкам;
+    # - trade_runtime_state  : текущее торговое состояние по инструментам.
+    sql_list = [
+        create_trades_table_sql(),
+        create_trade_events_table_sql(),
+        create_trade_runtime_state_table_sql(),
+        *create_trade_indexes_sql(),
+    ]
+
+    create_db_objects_if_missing(settings.trade_db_path, sql_list)
+
+    log_info(
+        logger,
+        f"Проверил торговую БД {settings.trade_db_path}: trades/trade_events/trade_runtime_state",
+        to_telegram=False,
+    )
+
+
 async def initialize_databases(settings):
     # Точка входа инициализации всех проектных БД.
     #
     # На старте создаём:
     # - ценовую БД;
-    # - prepared БД для первого шага поиска паттернов.
+    # - prepared БД для первого шага поиска паттернов;
+    # - trade БД для истории сделок и текущего торгового состояния.
     log_info(logger, "Запускаю инициализацию проектных БД", to_telegram=False)
 
     initialize_price_database(settings)
     initialize_prepared_database(settings)
+    initialize_trade_database(settings)
 
     log_info(logger, "Инициализация проектных БД завершена", to_telegram=False)
