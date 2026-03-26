@@ -58,7 +58,7 @@ def pearson_eval_end_bar_count_exclusive():
 # И только потом на этот shortlist накладывается второй шаг:
 # similarity score по дополнительным фильтрам.
 
-PEARSON_SHORTLIST_MIN_CORRELATION = 0.90
+PEARSON_SHORTLIST_MIN_CORRELATION = 0.80
 PEARSON_SHORTLIST_TOP_N = 50
 
 # ============================================================
@@ -121,8 +121,8 @@ FORECAST_TOP_N_AFTER_SIMILARITY = 10
 # Все границы вынесены сюда, чтобы их можно было спокойно менять
 # без переписывания логики.
 
-DECISION_MIN_SIMILARITY_CANDIDATES = 5
-DECISION_MIN_FORECAST_CANDIDATES = 5
+DECISION_MIN_SIMILARITY_CANDIDATES = 7
+DECISION_MIN_FORECAST_CANDIDATES = 7
 
 # Минимальный итоговый similarity-score у лучшего кандидата.
 DECISION_MIN_BEST_SIMILARITY_SCORE = 0.70
