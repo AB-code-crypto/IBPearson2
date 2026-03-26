@@ -35,7 +35,7 @@ from ts.ts_time import resolve_allowed_hour_slots
 INSTRUMENT_CODE = "MNQ"
 
 # Исторический уже закрытый час, который хотим прогнать как будто в realtime.
-CURRENT_HOUR_START_TEXT = "2026-03-17 13:00:00"
+CURRENT_HOUR_START_TEXT = "2026-03-16 16:00:00"
 
 # После 360 баров (30 минут) начинаем сравнение.
 MIN_BARS_TO_START = 360
@@ -46,7 +46,7 @@ TOP_N = 10
 
 # Сколько кандидатов рисовать на PNG-графике.
 # Берём первых кандидатов из уже построенного ranking.
-PLOT_CANDIDATES_COUNT = 5
+PLOT_CANDIDATES_COUNT = 10
 
 # Куда сохранять PNG-файл.
 OUTPUT_DIR = Path("./png/")
@@ -56,11 +56,11 @@ STOP_AFTER_BAR_INDEX = None
 
 # Как только не меньше REQUIRED_MATCH_COUNT кандидатов из TOP_N
 # достигли REQUIRED_CORRELATION, считаем, что найден рабочий сигнал.
-REQUIRED_CORRELATION = 0.9
+REQUIRED_CORRELATION = 0.8
 REQUIRED_MATCH_COUNT = 6
 
 # Минимально допустимое число исторических prepared-кандидатов.
-MIN_HISTORY_CANDIDATES = 100
+MIN_HISTORY_CANDIDATES = 500
 
 # Если True - останавливаемся на первом найденном сигнале.
 # Если False - продолжаем идти дальше по часу и печатаем каждый найденный сигнал.

@@ -65,7 +65,7 @@ def pearson_eval_end_bar_count_exclusive():
 # Но в боевом режиме лучше всегда задавать оба ограничения,
 # чтобы не гнать на второй шаг всю историю.
 
-PEARSON_SHORTLIST_MIN_CORRELATION = 0.90
+PEARSON_SHORTLIST_MIN_CORRELATION = 0.80
 PEARSON_SHORTLIST_TOP_N = 50
 
 # ============================================================

@@ -16,7 +16,7 @@ from ts.ts_time import resolve_allowed_hour_slots
 # ============================================================
 
 INSTRUMENT_CODE = "MNQ"
-HOUR_SLOT_CT = 14
+HOUR_SLOT_CT = 8
 
 # Если нужно, можно ограничить только историей строго раньше этого часа на CT-оси.
 # Формат: "YYYY-MM-DD HH:MM:SS" в CT.
