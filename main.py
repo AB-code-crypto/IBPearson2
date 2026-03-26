@@ -21,10 +21,10 @@ from core.logger import (
     get_logger,
     log_info,
 )
+from ts.decision_order_executor import DecisionOrderExecutor
 from ts.prepared_task import prepared_db_sync_task, run_prepared_sync_once
 from ts.pearson_live import PearsonLiveRuntime
 from trading.order_service import OrderService
-from trading.decision_order_executor import DecisionOrderExecutor
 
 # Настраиваем логирование один раз при старте приложения.
 setup_logging()
