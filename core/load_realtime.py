@@ -480,7 +480,10 @@ def maybe_feed_pearson_live(
     if instrument_code != pearson_live_runtime.instrument_code:
         return
 
-    bar_time_ts = int(bar.time.astimezone(timezone.utc).timestamp())
+    dt_utc = bar.time.astimezone(timezone.utc)
+    bar_time_ts = int(dt_utc.timestamp())
+    bar_time_ts_ct, bar_time_ct = build_ct_time_fields_from_utc_dt(dt_utc)
+
     last_emitted_bar_time_ts = pearson_live_state["last_emitted_bar_time_ts"]
 
     if (
@@ -494,6 +497,8 @@ def maybe_feed_pearson_live(
     if bar_time_ts not in pending_bars:
         pending_bars[bar_time_ts] = {
             "bar_time_ts": bar_time_ts,
+            "bar_time_ts_ct": bar_time_ts_ct,
+            "bar_time_ct": bar_time_ct,
         }
 
     pending_bars[bar_time_ts].update(

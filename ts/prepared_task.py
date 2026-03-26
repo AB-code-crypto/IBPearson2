@@ -71,11 +71,12 @@ async def run_prepared_sync_once(settings, instrument_code, lookback_days):
     return stats
 
 
-async def prepared_db_sync_task(settings, instrument_code="MNQ", lookback_days=31):
+async def prepared_db_sync_task(settings, instrument_code="MNQ", lookback_days=31, run_immediately=True):
     # Фоновая задача синхронизации prepared DB.
     #
     # Сценарий:
-    # - первый проход запускаем сразу после старта задачи;
+    # - если run_immediately=True, первый проход запускаем сразу;
+    # - если run_immediately=False, первый немедленный проход пропускаем;
     # - потом каждый час в hh:01:00 UTC.
     log_info(
         logger,
@@ -84,11 +85,12 @@ async def prepared_db_sync_task(settings, instrument_code="MNQ", lookback_days=3
     )
 
     try:
-        await run_prepared_sync_once(
-            settings=settings,
-            instrument_code=instrument_code,
-            lookback_days=lookback_days,
-        )
+        if run_immediately:
+            await run_prepared_sync_once(
+                settings=settings,
+                instrument_code=instrument_code,
+                lookback_days=lookback_days,
+            )
 
         while True:
             now_utc = datetime.now(timezone.utc)
