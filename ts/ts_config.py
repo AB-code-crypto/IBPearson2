@@ -58,7 +58,7 @@ def pearson_eval_end_bar_count_exclusive():
 # И только потом на этот shortlist накладывается второй шаг:
 # similarity score по дополнительным фильтрам.
 
-PEARSON_SHORTLIST_MIN_CORRELATION = 0.90
+PEARSON_SHORTLIST_MIN_CORRELATION = 0.80
 PEARSON_SHORTLIST_TOP_N = 50
 
 # ============================================================
