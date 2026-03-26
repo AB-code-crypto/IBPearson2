@@ -465,6 +465,64 @@ def build_pearson_partial_bar(what_to_show, bar):
     raise ValueError(f"Неподдерживаемый realtime stream: {what_to_show}")
 
 
+def format_pearson_live_leader_text(item, score_field_name, score_label):
+    # Формируем короткий текст по лидеру ranking.
+    return (
+        f"{item['hour_start_ct']} CT | "
+        f"slot_ct={item['hour_slot_ct']} | "
+        f"{score_label}={item[score_field_name]:.4f}"
+    )
+
+
+def maybe_log_pearson_live_snapshot(pearson_live_runtime):
+    # Пишем короткую диагностику live-runtime после каждого расчётного бара.
+    if pearson_live_runtime is None:
+        return
+
+    snapshot = pearson_live_runtime.get_last_snapshot()
+
+    if snapshot is None:
+        return
+
+    if not snapshot.correlation_calculated:
+        return
+
+    pearson_leader_text = "нет кандидатов"
+    if snapshot.ranked_candidates:
+        pearson_leader_text = format_pearson_live_leader_text(
+            item=snapshot.ranked_candidates[0],
+            score_field_name="correlation",
+            score_label="corr",
+        )
+
+    similarity_leader_text = "второй шаг не считался"
+    if snapshot.similarity_calculated:
+        if snapshot.ranked_similarity_candidates:
+            similarity_leader_text = format_pearson_live_leader_text(
+                item=snapshot.ranked_similarity_candidates[0],
+                score_field_name="final_score",
+                score_label="score",
+            )
+        else:
+            similarity_leader_text = "shortlist пуст"
+
+    log_info(
+        logger,
+        (
+            f"PEARSON LIVE | "
+            f"bar_index={snapshot.current_bar_index} | "
+            f"UTC_hour={snapshot.hour_start_ts} | "
+            f"CT_hour={snapshot.hour_start_ct} | "
+            f"hist={snapshot.history_candidate_count} | "
+            f"shortlist={len(snapshot.ranked_candidates)} | "
+            f"similarity={len(snapshot.ranked_similarity_candidates)} | "
+            f"best_pearson={pearson_leader_text} | "
+            f"best_similarity={similarity_leader_text}"
+        ),
+        to_telegram=False,
+    )
+
+
 def maybe_feed_pearson_live(
         pearson_live_runtime,
         pearson_live_state,
@@ -519,6 +577,7 @@ def maybe_feed_pearson_live(
         return
 
     pearson_live_runtime.on_closed_bar(pending_bar)
+    maybe_log_pearson_live_snapshot(pearson_live_runtime)
     pearson_live_state["last_emitted_bar_time_ts"] = bar_time_ts
 
     del pending_bars[bar_time_ts]

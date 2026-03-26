@@ -5,9 +5,12 @@ from typing import Optional
 from contracts import Instrument
 from core.db_initializer import build_table_name
 from ts.pearson_runtime import PearsonCurrentHour
+from ts.candidate_scoring import rank_prepared_candidates_by_similarity
 from ts.prepared_reader import load_prepared_hours_by_slots
 from ts.ts_config import (
     PEARSON_BAR_INTERVAL_SECONDS,
+    PEARSON_SHORTLIST_MIN_CORRELATION,
+    PEARSON_SHORTLIST_TOP_N,
     pearson_eval_start_bar_count,
     pearson_eval_end_bar_count_exclusive,
 )
@@ -38,8 +41,10 @@ class PearsonLiveSnapshot:
     history_candidate_count: int
     candidates_initialized: bool
     correlation_calculated: bool
+    similarity_calculated: bool
 
     ranked_candidates: list[dict]
+    ranked_similarity_candidates: list[dict]
 
 
 def floor_to_hour_ts(ts):
@@ -73,10 +78,17 @@ class PearsonLiveRuntime:
             bar_size_setting=instrument_row["barSizeSetting"],
         )
 
+        if min_correlation is None:
+            min_correlation = PEARSON_SHORTLIST_MIN_CORRELATION
+
+        if top_n is None:
+            top_n = PEARSON_SHORTLIST_TOP_N
+
         self.min_correlation = min_correlation
         self.top_n = top_n
 
         self.current_hour = None
+        self.current_hour_prepared_hours_map = {}
         self.current_hour_valid = True
         self.current_hour_invalid_reason = None
         self.current_hour_last_bar_time_ts = None
@@ -118,7 +130,9 @@ class PearsonLiveRuntime:
         self._append_bar_to_current_hour(bar)
 
         correlation_calculated = False
+        similarity_calculated = False
         ranked_candidates = []
+        ranked_similarity_candidates = []
 
         if self.current_hour_valid and self._is_search_window_active():
             if not self.current_hour.candidates_initialized:
@@ -132,9 +146,16 @@ class PearsonLiveRuntime:
             )
             correlation_calculated = True
 
+            ranked_similarity_candidates = self._rank_similarity_candidates(
+                ranked_candidates=ranked_candidates,
+            )
+            similarity_calculated = True
+
         self.last_snapshot = self._build_snapshot(
             correlation_calculated=correlation_calculated,
+            similarity_calculated=similarity_calculated,
             ranked_candidates=ranked_candidates,
+            ranked_similarity_candidates=ranked_similarity_candidates,
         )
 
         return self.last_snapshot
@@ -156,6 +177,9 @@ class PearsonLiveRuntime:
         )
 
         prepared_hours = self._load_candidates_for_current_hour()
+        self.current_hour_prepared_hours_map = {
+            item["hour_start_ts"]: item for item in prepared_hours
+        }
         self.current_hour.set_candidates(prepared_hours)
 
     def _load_candidates_for_current_hour(self):
@@ -181,6 +205,40 @@ class PearsonLiveRuntime:
 
         finally:
             prepared_conn.close()
+
+    def _rank_similarity_candidates(self, ranked_candidates):
+        # На вход берём уже готовый shortlist после первого Пирсона.
+        #
+        # Важно:
+        # здесь не работаем по всей истории, а только по тем кандидатам,
+        # которых уже отобрал и отсортировал первый Пирсон.
+        if self.current_hour is None:
+            return []
+
+        if not ranked_candidates:
+            return []
+
+        shortlist_prepared_hours = []
+
+        for item in ranked_candidates:
+            hour_start_ts = item["hour_start_ts"]
+
+            if hour_start_ts not in self.current_hour_prepared_hours_map:
+                raise ValueError(
+                    f"Не найден prepared-кандидат для hour_start_ts={hour_start_ts}"
+                )
+
+            shortlist_prepared_hours.append(
+                self.current_hour_prepared_hours_map[hour_start_ts]
+            )
+
+        ranked_similarity_candidates = rank_prepared_candidates_by_similarity(
+            current_values=self.current_hour.x,
+            prepared_hours=shortlist_prepared_hours,
+            min_required_pearson=None,
+        )
+
+        return ranked_similarity_candidates
 
     def _append_bar_to_current_hour(self, bar):
         # Добавляем очередной бар в текущий runtime-час.
@@ -293,10 +351,18 @@ class PearsonLiveRuntime:
             history_candidate_count=0,
             candidates_initialized=False,
             correlation_calculated=False,
+            similarity_calculated=False,
             ranked_candidates=[],
+            ranked_similarity_candidates=[],
         )
 
-    def _build_snapshot(self, correlation_calculated, ranked_candidates):
+    def _build_snapshot(
+            self,
+            correlation_calculated,
+            similarity_calculated,
+            ranked_candidates,
+            ranked_similarity_candidates,
+    ):
         # Собираем snapshot по текущему активному часу.
         if self.current_hour is None:
             return self._build_empty_snapshot()
@@ -319,5 +385,7 @@ class PearsonLiveRuntime:
             history_candidate_count=len(self.current_hour.candidates),
             candidates_initialized=self.current_hour.candidates_initialized,
             correlation_calculated=correlation_calculated,
+            similarity_calculated=similarity_calculated,
             ranked_candidates=ranked_candidates,
+            ranked_similarity_candidates=ranked_similarity_candidates,
         )
