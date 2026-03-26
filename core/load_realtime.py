@@ -474,6 +474,34 @@ def format_pearson_live_leader_text(item, score_field_name, score_label):
     )
 
 
+def build_forecast_direction_text(forecast_summary):
+    # Короткая интерпретация направления по прогнозному слою.
+    mean_final_move = forecast_summary["mean_final_move"]
+    median_final_move = forecast_summary["median_final_move"]
+
+    if mean_final_move > 0.0 and median_final_move > 0.0:
+        return "UP"
+
+    if mean_final_move < 0.0 and median_final_move < 0.0:
+        return "DOWN"
+
+    return "MIXED"
+
+
+def format_forecast_summary_text(forecast_summary):
+    # Формируем короткий текст по сводке прогнозного слоя.
+    direction_text = build_forecast_direction_text(forecast_summary)
+
+    return (
+        f"dir={direction_text} | "
+        f"n={forecast_summary['candidate_count']} | "
+        f"up={forecast_summary['positive_ratio']:.2f} | "
+        f"down={forecast_summary['negative_ratio']:.2f} | "
+        f"mean={forecast_summary['mean_final_move'] * 100:+.3f}% | "
+        f"median={forecast_summary['median_final_move'] * 100:+.3f}%"
+    )
+
+
 def maybe_log_pearson_live_snapshot(pearson_live_runtime):
     # Пишем короткую диагностику live-runtime после каждого расчётного бара.
     if pearson_live_runtime is None:
@@ -506,6 +534,13 @@ def maybe_log_pearson_live_snapshot(pearson_live_runtime):
         else:
             similarity_leader_text = "shortlist пуст"
 
+    forecast_text = "прогноз не считался"
+    if snapshot.forecast_calculated:
+        if snapshot.forecast_summary is not None:
+            forecast_text = format_forecast_summary_text(snapshot.forecast_summary)
+        else:
+            forecast_text = "нет forecast summary"
+
     log_info(
         logger,
         (
@@ -517,7 +552,8 @@ def maybe_log_pearson_live_snapshot(pearson_live_runtime):
             f"shortlist={len(snapshot.ranked_candidates)} | "
             f"similarity={len(snapshot.ranked_similarity_candidates)} | "
             f"best_pearson={pearson_leader_text} | "
-            f"best_similarity={similarity_leader_text}"
+            f"best_similarity={similarity_leader_text} | "
+            f"forecast={forecast_text}"
         ),
         to_telegram=False,
     )

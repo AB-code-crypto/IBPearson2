@@ -4,10 +4,12 @@ from typing import Optional
 
 from contracts import Instrument
 from core.db_initializer import build_table_name
+from ts.candidate_forecast import build_group_forecast_from_prepared_candidates
 from ts.pearson_runtime import PearsonCurrentHour
 from ts.candidate_scoring import rank_prepared_candidates_by_similarity
 from ts.prepared_reader import load_prepared_hours_by_slots
 from ts.ts_config import (
+    FORECAST_TOP_N_AFTER_SIMILARITY,
     PEARSON_BAR_INTERVAL_SECONDS,
     PEARSON_SHORTLIST_MIN_CORRELATION,
     PEARSON_SHORTLIST_TOP_N,
@@ -42,9 +44,11 @@ class PearsonLiveSnapshot:
     candidates_initialized: bool
     correlation_calculated: bool
     similarity_calculated: bool
+    forecast_calculated: bool
 
     ranked_candidates: list[dict]
     ranked_similarity_candidates: list[dict]
+    forecast_summary: Optional[dict]
 
 
 def floor_to_hour_ts(ts):
@@ -131,8 +135,10 @@ class PearsonLiveRuntime:
 
         correlation_calculated = False
         similarity_calculated = False
+        forecast_calculated = False
         ranked_candidates = []
         ranked_similarity_candidates = []
+        forecast_summary = None
 
         if self.current_hour_valid and self._is_search_window_active():
             if not self.current_hour.candidates_initialized:
@@ -151,11 +157,18 @@ class PearsonLiveRuntime:
             )
             similarity_calculated = True
 
+            forecast_summary = self._build_forecast_summary(
+                ranked_similarity_candidates=ranked_similarity_candidates,
+            )
+            forecast_calculated = True
+
         self.last_snapshot = self._build_snapshot(
             correlation_calculated=correlation_calculated,
             similarity_calculated=similarity_calculated,
+            forecast_calculated=forecast_calculated,
             ranked_candidates=ranked_candidates,
             ranked_similarity_candidates=ranked_similarity_candidates,
+            forecast_summary=forecast_summary,
         )
 
         return self.last_snapshot
@@ -239,6 +252,45 @@ class PearsonLiveRuntime:
         )
 
         return ranked_similarity_candidates
+
+    def _build_forecast_summary(self, ranked_similarity_candidates):
+        # Строим сводный прогноз по лучшим similarity-кандидатам.
+        #
+        # Здесь тоже не работаем по всей истории:
+        # сначала similarity уже отобрал и отсортировал shortlist,
+        # а прогноз строится только по его лучшей части.
+        if not ranked_similarity_candidates:
+            return None
+
+        selected_similarity_candidates = ranked_similarity_candidates[
+            :FORECAST_TOP_N_AFTER_SIMILARITY
+        ]
+
+        selected_prepared_hours = []
+
+        for item in selected_similarity_candidates:
+            hour_start_ts = item["hour_start_ts"]
+
+            if hour_start_ts not in self.current_hour_prepared_hours_map:
+                raise ValueError(
+                    f"Не найден prepared-кандидат для hour_start_ts={hour_start_ts}"
+                )
+
+            selected_prepared_hours.append(
+                self.current_hour_prepared_hours_map[hour_start_ts]
+            )
+
+        current_bar_index = self.current_hour.current_bar_index()
+
+        if current_bar_index is None:
+            return None
+
+        forecast_summary = build_group_forecast_from_prepared_candidates(
+            prepared_hours=selected_prepared_hours,
+            current_bar_index=current_bar_index,
+        )
+
+        return forecast_summary
 
     def _append_bar_to_current_hour(self, bar):
         # Добавляем очередной бар в текущий runtime-час.
@@ -352,16 +404,20 @@ class PearsonLiveRuntime:
             candidates_initialized=False,
             correlation_calculated=False,
             similarity_calculated=False,
+            forecast_calculated=False,
             ranked_candidates=[],
             ranked_similarity_candidates=[],
+            forecast_summary=None,
         )
 
     def _build_snapshot(
             self,
             correlation_calculated,
             similarity_calculated,
+            forecast_calculated,
             ranked_candidates,
             ranked_similarity_candidates,
+            forecast_summary,
     ):
         # Собираем snapshot по текущему активному часу.
         if self.current_hour is None:
@@ -386,6 +442,8 @@ class PearsonLiveRuntime:
             candidates_initialized=self.current_hour.candidates_initialized,
             correlation_calculated=correlation_calculated,
             similarity_calculated=similarity_calculated,
+            forecast_calculated=forecast_calculated,
             ranked_candidates=ranked_candidates,
             ranked_similarity_candidates=ranked_similarity_candidates,
+            forecast_summary=forecast_summary,
         )
