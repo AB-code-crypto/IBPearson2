@@ -229,6 +229,12 @@ async def main():
             except asyncio.CancelledError:
                 pass
 
+        if decision_order_executor is not None:
+            try:
+                await decision_order_executor.close()
+            except Exception:
+                pass
+
         try:
             await disconnect_ib(ib)
             log_info(logger, "Соединение с IB закрыто", to_telegram=False)

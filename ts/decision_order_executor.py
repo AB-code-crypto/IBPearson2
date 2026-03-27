@@ -4,6 +4,7 @@ from typing import Optional
 
 from core.logger import get_logger, log_info, log_warning
 from trading.order_service import OrderService
+from trading.trade_telegram_notifier import TradeTelegramNotifier
 from trading.trade_store import (
     append_trade_event,
     clear_trade_runtime_state,
@@ -33,11 +34,11 @@ class DecisionOrderState:
 
 class DecisionOrderExecutor:
     def __init__(
-        self,
-        *,
-        settings,
-        order_service: OrderService,
-        instrument_code: str = "MNQ",
+            self,
+            *,
+            settings,
+            order_service: OrderService,
+            instrument_code: str = "MNQ",
     ):
         self.settings = settings
         self.order_service = order_service
@@ -52,6 +53,11 @@ class DecisionOrderExecutor:
         self.time_in_force = settings.trading_order_time_in_force
         self.accept_timeout = settings.trading_accept_timeout_seconds
         self.done_timeout = settings.trading_done_timeout_seconds
+
+        self.telegram_notifier = TradeTelegramNotifier(
+            settings=settings,
+            instrument_code=instrument_code,
+        )
 
         self.state = DecisionOrderState()
 
@@ -76,7 +82,10 @@ class DecisionOrderExecutor:
         # Полностью очищаем внутреннее торговое состояние executor.
         self.state = DecisionOrderState()
 
-    async def on_snapshot(self, *, snapshot, active_futures):
+    async def close(self):
+        await self.telegram_notifier.close()
+
+    async def on_snapshot(self, *, snapshot, active_futures, pearson_live_runtime=None):
         if snapshot is None:
             return
 
@@ -86,11 +95,15 @@ class DecisionOrderExecutor:
             return
 
         await self._maybe_exit_position(snapshot=snapshot, active_futures=active_futures)
-        await self._maybe_enter_position(snapshot=snapshot, active_futures=active_futures)
+        await self._maybe_enter_position(
+            snapshot=snapshot,
+            active_futures=active_futures,
+            pearson_live_runtime=pearson_live_runtime,
+        )
 
         self._sync_runtime_state(snapshot)
 
-    async def _maybe_enter_position(self, *, snapshot, active_futures):
+    async def _maybe_enter_position(self, *, snapshot, active_futures, pearson_live_runtime=None):
         if self.state.position_side is not None:
             return
 
@@ -237,6 +250,23 @@ class DecisionOrderExecutor:
                 ),
                 to_telegram=True,
             )
+
+            try:
+                await self.telegram_notifier.send_entry_message(
+                    snapshot=snapshot,
+                    pearson_live_runtime=pearson_live_runtime,
+                    trade_id=trade_id,
+                    local_symbol=local_symbol,
+                    side=decision,
+                    quantity=self.quantity,
+                    placement=placement,
+                )
+            except Exception as notify_exc:
+                log_warning(
+                    logger,
+                    f"Ошибка отправки telegram-сообщения об открытии сделки: {notify_exc}",
+                    to_telegram=False,
+                )
 
         except Exception as exc:
             if trade_id is not None:
@@ -407,6 +437,22 @@ class DecisionOrderExecutor:
                 ),
                 to_telegram=True,
             )
+
+            try:
+                await self.telegram_notifier.send_exit_message(
+                    snapshot=snapshot,
+                    trade_id=trade_id,
+                    entry_side=self.state.position_side,
+                    exit_side=exit_side,
+                    quantity=self.state.position_qty,
+                    placement=placement,
+                )
+            except Exception as notify_exc:
+                log_warning(
+                    logger,
+                    f"Ошибка отправки telegram-сообщения о закрытии сделки: {notify_exc}",
+                    to_telegram=False,
+                )
 
             clear_trade_runtime_state(self.trade_db_path, self.instrument_code)
 

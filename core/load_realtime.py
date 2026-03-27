@@ -674,6 +674,7 @@ def maybe_schedule_decision_order_executor(
             await decision_order_executor.on_snapshot(
                 snapshot=snapshot,
                 active_futures=active_futures,
+                pearson_live_runtime=pearson_live_runtime,
             )
         except Exception as exc:
             log_warning(
