@@ -23,12 +23,6 @@ def _format_utc_ts(ts):
 
 
 def _extract_broker_position_for_local_symbol(ib, local_symbol):
-    # Читаем текущую позицию брокера по localSymbol.
-    #
-    # В ib_async positions() относится к current state и синхронизируется
-    # с TWS/IBG, а openTrades() даёт открытые заявки. Для корректного
-    # восстановления на коннекте в TWS/IBG должна быть включена опция
-    # "Download open orders on connection". Support: ib_async docs. 
     position_qty = 0
     avg_cost = None
 
@@ -50,7 +44,6 @@ def _extract_broker_position_for_local_symbol(ib, local_symbol):
 
 
 def _extract_broker_open_orders_for_local_symbol(ib, local_symbol):
-    # Читаем открытые заявки брокера по localSymbol.
     result = []
 
     for trade in ib.openTrades():
@@ -65,6 +58,7 @@ def _extract_broker_open_orders_for_local_symbol(ib, local_symbol):
 
         result.append(
             {
+                "trade": trade,
                 "order_id": getattr(order, "orderId", None),
                 "perm_id": getattr(order, "permId", None),
                 "action": getattr(order, "action", None),
@@ -87,6 +81,60 @@ def _position_side_from_qty(position_qty):
     return None
 
 
+def _serialize_open_orders(broker_open_orders):
+    return [
+        {
+            "order_id": item["order_id"],
+            "perm_id": item["perm_id"],
+            "action": item["action"],
+            "order_type": item["order_type"],
+            "total_quantity": item["total_quantity"],
+            "status": item["status"],
+        }
+        for item in broker_open_orders
+    ]
+
+
+def _cancel_open_orders_if_enabled(settings, ib, local_symbol, broker_open_orders):
+    # Отменяем открытые ордера по localSymbol, если включена политика автоснятия.
+    if not broker_open_orders:
+        return {
+            "cancel_enabled": settings.trade_recovery_cancel_open_orders,
+            "cancel_attempted": False,
+            "cancelled_order_ids": [],
+            "message": "Открытых ордеров нет",
+        }
+
+    if not settings.trade_recovery_cancel_open_orders:
+        return {
+            "cancel_enabled": False,
+            "cancel_attempted": False,
+            "cancelled_order_ids": [],
+            "message": "Автоснятие открытых ордеров выключено",
+        }
+
+    cancelled_order_ids = []
+
+    for item in broker_open_orders:
+        trade = item["trade"]
+        order = getattr(trade, "order", None)
+
+        if order is None:
+            continue
+
+        ib.cancelOrder(order)
+
+        if item["order_id"] is not None:
+            cancelled_order_ids.append(int(item["order_id"]))
+
+    return {
+        "cancel_enabled": True,
+        "cancel_attempted": True,
+        "cancelled_order_ids": cancelled_order_ids,
+        "message": f"Отправлены cancelOrder для {len(cancelled_order_ids)} ордеров",
+    }
+
+
 def _build_recovery_summary(
         *,
         instrument_code,
@@ -95,6 +143,7 @@ def _build_recovery_summary(
         open_trade,
         broker_position,
         broker_open_orders,
+        cancel_result,
         action,
         message,
 ):
@@ -105,6 +154,7 @@ def _build_recovery_summary(
         "open_trade": open_trade,
         "broker_position": broker_position,
         "broker_open_orders": broker_open_orders,
+        "cancel_result": cancel_result,
         "action": action,
         "message": message,
     }
@@ -118,16 +168,6 @@ def reconcile_trade_state_once(
         active_futures,
         decision_order_executor=None,
 ):
-    # Один проход reconciliation между:
-    # - trade_db runtime/open trade;
-    # - фактической позицией брокера;
-    # - открытыми заявками брокера.
-    #
-    # Ключевая идея:
-    # - если брокер пуст и локально пусто -> чистое состояние;
-    # - если локально сделка есть, а у брокера позиции нет -> помечаем рассинхрон;
-    # - если у брокера позиция есть, а локально сделки нет -> создаём RECOVERED trade;
-    # - если и локально, и у брокера позиция есть -> подхватываем и гидратим executor.
     if instrument_code not in active_futures:
         raise ValueError(f"Нет active future для {instrument_code}")
 
@@ -151,8 +191,30 @@ def reconcile_trade_state_once(
     now_ts = _utc_now_ts()
     now_text = _format_utc_ts(now_ts)
 
-    # Случай 1: везде пусто.
     if open_trade is None and broker_qty == 0:
+        cancel_result = _cancel_open_orders_if_enabled(
+            settings=settings,
+            ib=ib,
+            local_symbol=local_symbol,
+            broker_open_orders=broker_open_orders,
+        )
+
+        if broker_open_orders:
+            append_trade_event(
+                settings.trade_db_path,
+                trade_id=None,
+                instrument_code=instrument_code,
+                event_type="RECOVERY_BROKER_OPEN_ORDERS_WITHOUT_POSITION",
+                event_time_ts=now_ts,
+                event_time=now_text,
+                message="У брокера найдены открытые ордера без позиции и без локальной сделки",
+                payload={
+                    "local_symbol": local_symbol,
+                    "open_orders": _serialize_open_orders(broker_open_orders),
+                    "cancel_result": cancel_result,
+                },
+            )
+
         clear_trade_runtime_state(settings.trade_db_path, instrument_code)
 
         if decision_order_executor is not None:
@@ -165,13 +227,20 @@ def reconcile_trade_state_once(
             open_trade=open_trade,
             broker_position=broker_position,
             broker_open_orders=broker_open_orders,
+            cancel_result=cancel_result,
             action="CLEAR_EMPTY",
             message="Локально и у брокера позиции нет",
         )
 
-    # Случай 2: локально есть открытая сделка, а у брокера позиции нет.
     if open_trade is not None and broker_qty == 0:
         trade_id = open_trade["trade_id"]
+
+        cancel_result = _cancel_open_orders_if_enabled(
+            settings=settings,
+            ib=ib,
+            local_symbol=local_symbol,
+            broker_open_orders=broker_open_orders,
+        )
 
         mark_trade_error(
             settings.trade_db_path,
@@ -190,7 +259,8 @@ def reconcile_trade_state_once(
             message="Локально сделка была открыта, но у брокера позиция отсутствует",
             payload={
                 "local_symbol": local_symbol,
-                "broker_open_orders": broker_open_orders,
+                "broker_open_orders": _serialize_open_orders(broker_open_orders),
+                "cancel_result": cancel_result,
             },
         )
 
@@ -206,17 +276,12 @@ def reconcile_trade_state_once(
             open_trade=open_trade,
             broker_position=broker_position,
             broker_open_orders=broker_open_orders,
+            cancel_result=cancel_result,
             action="MARK_ERROR_AND_CLEAR",
             message="Локальная сделка помечена как ERROR: у брокера позиции нет",
         )
 
-    # Случай 3: у брокера позиция есть, а локально сделки нет.
     if open_trade is None and broker_qty != 0:
-        # В этом случае создаём recovered-сделку и подхватываем позицию.
-        #
-        # Поскольку доверенного signal-hour у нас нет, entry_hour_start_ts ставим 0.
-        # Тогда executor на первом же snapshot воспримет позицию как "старую"
-        # и сможет закрыть её немедленно по своей штатной логике, если нужно.
         trade_id = create_trade(
             settings.trade_db_path,
             instrument_code=instrument_code,
@@ -259,7 +324,7 @@ def reconcile_trade_state_once(
                 "local_symbol": local_symbol,
                 "broker_position_qty": broker_qty,
                 "broker_avg_cost": broker_position["avg_cost"],
-                "broker_open_orders": broker_open_orders,
+                "broker_open_orders": _serialize_open_orders(broker_open_orders),
             },
         )
 
@@ -295,11 +360,11 @@ def reconcile_trade_state_once(
             open_trade=None,
             broker_position=broker_position,
             broker_open_orders=broker_open_orders,
+            cancel_result=None,
             action="CREATE_RECOVERED_TRADE",
             message="Позиция брокера подхвачена в локальную БД",
         )
 
-    # Случай 4: и локально, и у брокера позиция есть.
     if open_trade is not None and broker_qty != 0:
         trade_id = open_trade["trade_id"]
         local_side = open_trade["side"]
@@ -321,7 +386,7 @@ def reconcile_trade_state_once(
                     "local_qty": local_qty,
                     "broker_side": broker_side,
                     "broker_qty": broker_abs_qty,
-                    "broker_open_orders": broker_open_orders,
+                    "broker_open_orders": _serialize_open_orders(broker_open_orders),
                 },
             )
         else:
@@ -334,7 +399,7 @@ def reconcile_trade_state_once(
                 event_time=now_text,
                 message="Открытая локальная сделка подтверждена брокером и подхвачена",
                 payload={
-                    "broker_open_orders": broker_open_orders,
+                    "broker_open_orders": _serialize_open_orders(broker_open_orders),
                 },
             )
 
@@ -372,6 +437,7 @@ def reconcile_trade_state_once(
             open_trade=open_trade,
             broker_position=broker_position,
             broker_open_orders=broker_open_orders,
+            cancel_result=None,
             action="ATTACH_EXISTING_TRADE",
             message="Локальная открытая сделка синхронизирована с брокером",
         )
@@ -388,13 +454,6 @@ async def trade_reconcile_task(
         instrument_code="MNQ",
         interval_seconds=30.0,
 ):
-    # Фоновая периодическая синхронизация trade_db <-> broker.
-    #
-    # Нужна, чтобы:
-    # - подхватить состояние после рестарта;
-    # - после восстановления соединения снова привести локальное состояние
-    #   к реальности у брокера;
-    # - не зависеть только от памяти текущего процесса.
     log_info(
         logger,
         f"Запуск фоновой синхронизации trade state для {instrument_code}",
@@ -415,14 +474,26 @@ async def trade_reconcile_task(
                         decision_order_executor=decision_order_executor,
                     )
 
+                    cancelled_ids = ()
+                    if summary["cancel_result"] is not None:
+                        cancelled_ids = tuple(summary["cancel_result"]["cancelled_order_ids"])
+
                     signature = (
                         summary["action"],
                         summary["broker_position"]["position_qty"],
                         len(summary["broker_open_orders"]),
                         summary["open_trade"]["trade_id"] if summary["open_trade"] else None,
+                        cancelled_ids,
                     )
 
                     if signature != last_signature:
+                        cancel_text = "cancel=NONE"
+                        if summary["cancel_result"] is not None:
+                            cancel_text = (
+                                f"cancel_attempted={summary['cancel_result']['cancel_attempted']} | "
+                                f"cancelled={summary['cancel_result']['cancelled_order_ids']}"
+                            )
+
                         log_info(
                             logger,
                             (
@@ -431,7 +502,8 @@ async def trade_reconcile_task(
                                 f"action={summary['action']} | "
                                 f"message={summary['message']} | "
                                 f"broker_qty={summary['broker_position']['position_qty']} | "
-                                f"open_orders={len(summary['broker_open_orders'])}"
+                                f"open_orders={len(summary['broker_open_orders'])} | "
+                                f"{cancel_text}"
                             ),
                             to_telegram=True,
                         )

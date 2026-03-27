@@ -54,6 +54,15 @@ class Settings:
     trading_accept_timeout_seconds: float = 5.0
     trading_done_timeout_seconds: float = 60.0
 
+    # ==============================
+    # Recovery / reconcile торгового состояния
+    # ==============================
+
+    # Если True, reconciliation будет автоматически снимать открытые заявки
+    # брокера по инструменту, когда позиции нет и локальной активной сделки нет
+    # либо когда локальная сделка есть, а брокерской позиции уже нет.
+    trade_recovery_cancel_open_orders: bool = False
+
 
 # Набор настроек для "боевого" подключения.
 settings_live = Settings()
