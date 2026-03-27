@@ -25,11 +25,11 @@ from ts.decision_order_executor import DecisionOrderExecutor
 from ts.prepared_task import prepared_db_sync_task, run_prepared_sync_once
 from ts.pearson_live import PearsonLiveRuntime
 from trading.order_service import OrderService
+from trading.trade_recovery import reconcile_trade_state_once, trade_reconcile_task
 
 # Настраиваем логирование один раз при старте приложения.
 setup_logging()
 
-# Логгер этого модуля.
 logger = get_logger(__name__)
 
 # Создаём TelegramSender и подключаем его к логгеру.
@@ -46,7 +46,8 @@ async def main():
     heartbeat_task = None
     history_task = None
     realtime_task = None
-    prepared_sync_task = None
+    prepared_sync_task_handle = None
+    trade_reconcile_task_handle = None
 
     # Runtime стратегии и торгового контура.
     pearson_live_runtime = None
@@ -123,6 +124,27 @@ async def main():
             instrument_code="MNQ",
         )
 
+        # Один раз на старте приводим локальное торговое состояние
+        # к фактическому состоянию у брокера.
+        recovery_summary = reconcile_trade_state_once(
+            settings=settings,
+            ib=ib,
+            instrument_code="MNQ",
+            active_futures=active_futures,
+            decision_order_executor=decision_order_executor,
+        )
+        log_info(
+            logger,
+            (
+                f"TRADE RECOVERY STARTUP | "
+                f"action={recovery_summary['action']} | "
+                f"message={recovery_summary['message']} | "
+                f"broker_qty={recovery_summary['broker_position']['position_qty']} | "
+                f"open_orders={len(recovery_summary['broker_open_orders'])}"
+            ),
+            to_telegram=True,
+        )
+
         if settings.trading_enable_order_execution:
             log_info(logger, "Торговое исполнение включено", to_telegram=True)
         else:
@@ -141,9 +163,7 @@ async def main():
             )
         )
 
-        # После стартовой синхронизации prepared DB включаем обычную
-        # фоновую почасовую синхронизацию без повторного немедленного прохода.
-        prepared_sync_task = asyncio.create_task(
+        prepared_sync_task_handle = asyncio.create_task(
             prepared_db_sync_task(
                 settings=settings,
                 instrument_code="MNQ",
@@ -152,81 +172,76 @@ async def main():
             )
         )
 
-        # Держим процесс живым, пока живы realtime и prepared-sync.
-        await asyncio.gather(realtime_task, prepared_sync_task)
+        trade_reconcile_task_handle = asyncio.create_task(
+            trade_reconcile_task(
+                ib=ib,
+                settings=settings,
+                active_futures=active_futures,
+                decision_order_executor=decision_order_executor,
+                instrument_code="MNQ",
+                interval_seconds=30.0,
+            )
+        )
+
+        await asyncio.gather(
+            realtime_task,
+            prepared_sync_task_handle,
+            trade_reconcile_task_handle,
+        )
 
     except asyncio.CancelledError:
-        # Это штатный сценарий при ручной остановке робота.
         shutdown_message = "Робот остановлен пользователем"
         raise
 
     finally:
-        # Сначала останавливаем prepared-sync.
-        if prepared_sync_task is not None and not prepared_sync_task.done():
-            prepared_sync_task.cancel()
-
+        if prepared_sync_task_handle is not None:
+            prepared_sync_task_handle.cancel()
             try:
-                await prepared_sync_task
+                await prepared_sync_task_handle
             except asyncio.CancelledError:
                 pass
 
-        # Потом останавливаем realtime.
-        if realtime_task is not None and not realtime_task.done():
-            realtime_task.cancel()
+        if trade_reconcile_task_handle is not None:
+            trade_reconcile_task_handle.cancel()
+            try:
+                await trade_reconcile_task_handle
+            except asyncio.CancelledError:
+                pass
 
+        if realtime_task is not None:
+            realtime_task.cancel()
             try:
                 await realtime_task
             except asyncio.CancelledError:
                 pass
 
-        # Если история ещё не завершилась — отменяем.
-        if history_task is not None and not history_task.done():
-            history_task.cancel()
-
-            try:
-                await history_task
-            except asyncio.CancelledError:
-                pass
-
-        # Останавливаем heartbeat.
         if heartbeat_task is not None:
             heartbeat_task.cancel()
-
             try:
                 await heartbeat_task
             except asyncio.CancelledError:
                 pass
 
-        # Останавливаем монитор.
         if monitor_task is not None:
             monitor_task.cancel()
-
             try:
                 await monitor_task
             except asyncio.CancelledError:
                 pass
 
-        # Закрываем соединение с IB.
-        disconnect_ib(ib)
+        try:
+            await disconnect_ib(ib)
+            log_info(logger, "Соединение с IB закрыто", to_telegram=False)
+        except Exception:
+            pass
 
-        # Больше не создаём новые telegram-задачи через logger-обёртки.
         disable_telegram_logging()
-
-        # Это сообщение идёт только в консоль.
-        logger.info("Соединение с IB закрыто")
-
-        # Дожидаемся уже созданных задач отправки в Telegram.
+        log_info(logger, shutdown_message)
         await wait_telegram_logging()
-
-        # Явно отправляем финальное сообщение в Telegram.
-        await telegram_sender.send_text(f"{shutdown_message}. Соединение с IB закрыто")
-
-        # И только после этого закрываем HTTP-сессию Telegram.
-        await telegram_sender.close()
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Робот остановлен пользователем")
+        log_info(logger, "Робот остановлен пользователем")

@@ -23,13 +23,6 @@ logger = get_logger(__name__)
 
 @dataclass(slots=True)
 class DecisionOrderState:
-    # Состояние простого торгового контура.
-    #
-    # Первый вариант специально делаем максимально прямым:
-    # - не больше одного входа в час;
-    # - не больше одной позиции одновременно;
-    # - выход принудительно за 10 секунд до конца часа;
-    # - если новый час уже начался, а позиция ещё есть, пытаемся закрыть её сразу.
     position_side: Optional[str] = None
     position_qty: int = 0
 
@@ -39,20 +32,12 @@ class DecisionOrderState:
 
 
 class DecisionOrderExecutor:
-    # Преобразует decision layer в реальные заявки через OrderService
-    # и одновременно пишет жизненный цикл сделки в trade DB.
-    #
-    # На текущем этапе логика простая:
-    # - если decision = LONG -> BUY market;
-    # - если decision = SHORT -> SELL market;
-    # - выход за 10 секунд до конца часа market-ордером;
-    # - одновременно держим не больше одной позиции.
     def __init__(
-            self,
-            *,
-            settings,
-            order_service: OrderService,
-            instrument_code: str = "MNQ",
+        self,
+        *,
+        settings,
+        order_service: OrderService,
+        instrument_code: str = "MNQ",
     ):
         self.settings = settings
         self.order_service = order_service
@@ -70,15 +55,31 @@ class DecisionOrderExecutor:
 
         self.state = DecisionOrderState()
 
+    def hydrate_recovered_state(
+            self,
+            *,
+            current_trade_id,
+            position_side,
+            position_qty,
+            entry_hour_start_ts,
+    ):
+        # Загружаем восстановленное состояние из recovery/reconcile слоя.
+        self.state = DecisionOrderState(
+            position_side=position_side,
+            position_qty=position_qty,
+            current_trade_id=current_trade_id,
+            entry_hour_start_ts=entry_hour_start_ts,
+            last_entry_attempt_hour_start_ts=entry_hour_start_ts,
+        )
+
+    def reset_in_memory_state(self):
+        # Полностью очищаем внутреннее торговое состояние executor.
+        self.state = DecisionOrderState()
+
     async def on_snapshot(self, *, snapshot, active_futures):
-        # Главная точка входа.
-        #
-        # Вызывается после расчёта очередного snapshot live-логики.
         if snapshot is None:
             return
 
-        # Даже если торговое исполнение выключено, держим в БД
-        # актуальное runtime-состояние и последнее решение.
         self._sync_runtime_state(snapshot)
 
         if not self.enabled:
@@ -87,7 +88,6 @@ class DecisionOrderExecutor:
         await self._maybe_exit_position(snapshot=snapshot, active_futures=active_futures)
         await self._maybe_enter_position(snapshot=snapshot, active_futures=active_futures)
 
-        # После возможных действий ещё раз синхронизируем runtime-state.
         self._sync_runtime_state(snapshot)
 
     async def _maybe_enter_position(self, *, snapshot, active_futures):
@@ -281,12 +281,10 @@ class DecisionOrderExecutor:
 
         need_exit = False
 
-        # Штатный выход внутри того же часа.
         if snapshot.hour_start_ts == self.state.entry_hour_start_ts:
             if snapshot.current_bar_index is not None and snapshot.current_bar_index >= self.exit_bar_index:
                 need_exit = True
 
-        # Аварийный выход, если уже начался новый час, а позиция ещё висит.
         if snapshot.hour_start_ts != self.state.entry_hour_start_ts:
             need_exit = True
 
@@ -510,7 +508,6 @@ class DecisionOrderExecutor:
         )
 
     def _sync_runtime_state(self, snapshot):
-        # Обновляем trade_runtime_state по свежему snapshot и внутреннему состоянию executor.
         last_decision = None
         last_decision_reason = None
 
