@@ -525,6 +525,20 @@ def reconcile_trade_state_once(
     raise RuntimeError("Непредусмотренная ветка reconcile")
 
 
+def build_recovery_signature(summary: dict[str, Any]) -> tuple:
+    cancelled_ids = ()
+    if summary["cancel_result"] is not None:
+        cancelled_ids = tuple(summary["cancel_result"]["cancelled_order_ids"])
+
+    return (
+        summary["action"],
+        summary["broker_position"]["position_qty"],
+        len(summary["broker_open_orders"]),
+        summary["open_trade"]["trade_id"] if summary["open_trade"] else None,
+        cancelled_ids,
+    )
+
+
 async def trade_reconcile_task(
     *,
     ib,
@@ -533,13 +547,14 @@ async def trade_reconcile_task(
     decision_order_executor=None,
     instrument_code="MNQ",
     interval_seconds=30.0,
+    initial_signature=None,
 ):
     log_info(
         logger,
         f"Запуск фоновой синхронизации trade state для {instrument_code}",
         to_telegram=False,
     )
-    last_signature = None
+    last_signature = initial_signature
 
     try:
         while True:
@@ -554,17 +569,7 @@ async def trade_reconcile_task(
                         active_futures=active_futures,
                         decision_order_executor=decision_order_executor,
                     )
-                    cancelled_ids = ()
-                    if summary["cancel_result"] is not None:
-                        cancelled_ids = tuple(summary["cancel_result"]["cancelled_order_ids"])
-
-                    signature = (
-                        summary["action"],
-                        summary["broker_position"]["position_qty"],
-                        len(summary["broker_open_orders"]),
-                        summary["open_trade"]["trade_id"] if summary["open_trade"] else None,
-                        cancelled_ids,
-                    )
+                    signature = build_recovery_signature(summary)
 
                     if signature != last_signature:
                         cancel_text = "cancel=NONE"

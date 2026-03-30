@@ -23,7 +23,7 @@ from core.logger import (
 )
 from core.telegram_sender import TelegramSender
 from trading.order_service import OrderService
-from trading.trade_recovery import reconcile_trade_state_once, trade_reconcile_task
+from trading.trade_recovery import build_recovery_signature, reconcile_trade_state_once, trade_reconcile_task
 from ts.decision_order_executor import DecisionOrderExecutor
 from ts.pearson_live import PearsonLiveRuntime
 from ts.prepared_task import prepared_db_sync_task, run_prepared_sync_once
@@ -86,7 +86,7 @@ def _build_decision_executor(*, ib) -> DecisionOrderExecutor:
     )
 
 
-def _run_startup_recovery(*, ib, active_futures: dict, decision_order_executor: DecisionOrderExecutor) -> None:
+def _run_startup_recovery(*, ib, active_futures: dict, decision_order_executor: DecisionOrderExecutor) -> dict:
     """Один раз на старте сверяем локальное состояние с брокером."""
     recovery_summary = reconcile_trade_state_once(
         settings=settings,
@@ -113,6 +113,8 @@ def _run_startup_recovery(*, ib, active_futures: dict, decision_order_executor: 
     else:
         log_info(logger, "Торговое исполнение выключено", to_telegram=False)
 
+    return recovery_summary
+
 
 def _start_background_tasks(
         *,
@@ -122,6 +124,7 @@ def _start_background_tasks(
         pearson_live_runtime: PearsonLiveRuntime,
         decision_order_executor: DecisionOrderExecutor,
         recent_backfill_state: dict,
+        trade_reconcile_initial_signature=None,
 ) -> dict[str, asyncio.Task]:
     """Запускаем все фоновые задачи приложения и возвращаем их по именам."""
     return {
@@ -162,6 +165,7 @@ def _start_background_tasks(
                 decision_order_executor=decision_order_executor,
                 instrument_code="MNQ",
                 interval_seconds=30.0,
+                initial_signature=trade_reconcile_initial_signature,
             ),
             name="trade_reconcile_task",
         ),
@@ -227,6 +231,7 @@ async def main():
     tasks: dict[str, asyncio.Task] = {}
     decision_order_executor: Optional[DecisionOrderExecutor] = None
     recent_backfill_state = _build_recent_backfill_state()
+    startup_recovery_signature = None
 
     ib, ib_health = await connect_ib(settings)
 
@@ -245,11 +250,12 @@ async def main():
         pearson_live_runtime = await _bootstrap_strategy_runtime()
         decision_order_executor = _build_decision_executor(ib=ib)
 
-        _run_startup_recovery(
+        startup_recovery_summary = _run_startup_recovery(
             ib=ib,
             active_futures=active_futures,
             decision_order_executor=decision_order_executor,
         )
+        startup_recovery_signature = build_recovery_signature(startup_recovery_summary)
 
         tasks = _start_background_tasks(
             ib=ib,
@@ -258,6 +264,7 @@ async def main():
             pearson_live_runtime=pearson_live_runtime,
             decision_order_executor=decision_order_executor,
             recent_backfill_state=recent_backfill_state,
+            trade_reconcile_initial_signature=startup_recovery_signature,
         )
 
         await asyncio.gather(
