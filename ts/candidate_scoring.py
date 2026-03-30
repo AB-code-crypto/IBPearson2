@@ -1,5 +1,7 @@
 from ts.candidate_features import (
     build_first_diff,
+    calc_diff_pearson,
+    calc_diff_sign_match_ratio,
     calc_mean_abs_diff,
     calc_net_move,
     calc_path_efficiency,
@@ -8,6 +10,10 @@ from ts.candidate_features import (
     calc_range_position,
 )
 from ts.ts_config import (
+    SIMILARITY_DIFF_PEARSON_SCORE_ONE_AT,
+    SIMILARITY_DIFF_PEARSON_SCORE_ZERO_AT,
+    SIMILARITY_DIFF_SIGN_MATCH_SCORE_ONE_AT,
+    SIMILARITY_DIFF_SIGN_MATCH_SCORE_ZERO_AT,
     SIMILARITY_EFFICIENCY_DISTANCE_ZERO_AT,
     SIMILARITY_MEAN_ABS_DIFF_DISTANCE_ZERO_AT,
     SIMILARITY_NET_MOVE_DISTANCE_ZERO_AT,
@@ -15,11 +21,14 @@ from ts.ts_config import (
     SIMILARITY_PEARSON_SCORE_ZERO_AT,
     SIMILARITY_RANGE_DISTANCE_ZERO_AT,
     SIMILARITY_RANGE_POSITION_DISTANCE_ZERO_AT,
+    SIMILARITY_WEIGHT_DIFF_PEARSON,
+    SIMILARITY_WEIGHT_DIFF_SIGN_MATCH,
     SIMILARITY_WEIGHT_EFFICIENCY,
     SIMILARITY_WEIGHT_MEAN_ABS_DIFF,
     SIMILARITY_WEIGHT_NET_MOVE,
     SIMILARITY_WEIGHT_PEARSON,
     SIMILARITY_WEIGHT_RANGE,
+    SIMILARITY_WEIGHT_RANGE_POSITION,
 )
 
 
@@ -125,6 +134,9 @@ def evaluate_similarity_between_prefixes(current_values, candidate_values):
     if pearson is None:
         return None
 
+    diff_pearson = calc_diff_pearson(current_values, candidate_values)
+    diff_sign_match_ratio = calc_diff_sign_match_ratio(current_values, candidate_values)
+
     current_features = build_similarity_features(current_values)
     candidate_features = build_similarity_features(candidate_values)
 
@@ -154,6 +166,18 @@ def evaluate_similarity_between_prefixes(current_values, candidate_values):
         score_zero_at=SIMILARITY_PEARSON_SCORE_ZERO_AT,
         score_one_at=SIMILARITY_PEARSON_SCORE_ONE_AT,
     )
+    diff_pearson_score = 0.0
+    if diff_pearson is not None:
+        diff_pearson_score = calc_score_from_value(
+            value=diff_pearson,
+            score_zero_at=SIMILARITY_DIFF_PEARSON_SCORE_ZERO_AT,
+            score_one_at=SIMILARITY_DIFF_PEARSON_SCORE_ONE_AT,
+        )
+    diff_sign_match_score = calc_score_from_value(
+        value=diff_sign_match_ratio,
+        score_zero_at=SIMILARITY_DIFF_SIGN_MATCH_SCORE_ZERO_AT,
+        score_one_at=SIMILARITY_DIFF_SIGN_MATCH_SCORE_ONE_AT,
+    )
     range_score = calc_score_from_distance(
         distance=range_distance,
         distance_zero_at=SIMILARITY_RANGE_DISTANCE_ZERO_AT,
@@ -180,13 +204,18 @@ def evaluate_similarity_between_prefixes(current_values, candidate_values):
             (pearson_score, SIMILARITY_WEIGHT_PEARSON),
             (range_score, SIMILARITY_WEIGHT_RANGE),
             (net_move_score, SIMILARITY_WEIGHT_NET_MOVE),
+            (range_position_score, SIMILARITY_WEIGHT_RANGE_POSITION),
             (mean_abs_diff_score, SIMILARITY_WEIGHT_MEAN_ABS_DIFF),
             (efficiency_score, SIMILARITY_WEIGHT_EFFICIENCY),
+            (diff_pearson_score, SIMILARITY_WEIGHT_DIFF_PEARSON),
+            (diff_sign_match_score, SIMILARITY_WEIGHT_DIFF_SIGN_MATCH),
         ]
     )
 
     return {
         "pearson": pearson,
+        "diff_pearson": diff_pearson,
+        "diff_sign_match_ratio": diff_sign_match_ratio,
         "current_range": current_features["range"],
         "candidate_range": candidate_features["range"],
         "range_distance": range_distance,
@@ -203,6 +232,8 @@ def evaluate_similarity_between_prefixes(current_values, candidate_values):
         "candidate_path_efficiency": candidate_features["path_efficiency"],
         "efficiency_distance": efficiency_distance,
         "pearson_score": pearson_score,
+        "diff_pearson_score": diff_pearson_score,
+        "diff_sign_match_score": diff_sign_match_score,
         "range_score": range_score,
         "net_move_score": net_move_score,
         "range_position_score": range_position_score,
