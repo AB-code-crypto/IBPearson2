@@ -59,7 +59,7 @@ def pearson_eval_end_bar_count_exclusive():
 # similarity score по дополнительным фильтрам.
 
 PEARSON_SHORTLIST_MIN_CORRELATION = 0.80
-PEARSON_SHORTLIST_TOP_N = 50
+PEARSON_SHORTLIST_TOP_N = 30
 
 # ============================================================
 # Настройки второго шага: score похожести кандидатов
@@ -102,7 +102,7 @@ def similarity_total_weight():
 # После similarity ranking берём только лучшие historical-кандидаты
 # и по ним строим сводный прогноз future-path.
 
-FORECAST_TOP_N_AFTER_SIMILARITY = 10
+FORECAST_TOP_N_AFTER_SIMILARITY = 5
 
 # ============================================================
 # Настройки decision layer
@@ -121,11 +121,11 @@ FORECAST_TOP_N_AFTER_SIMILARITY = 10
 # Все границы вынесены сюда, чтобы их можно было спокойно менять
 # без переписывания логики.
 
-DECISION_MIN_SIMILARITY_CANDIDATES = 7
-DECISION_MIN_FORECAST_CANDIDATES = 7
+DECISION_MIN_SIMILARITY_CANDIDATES =5
+DECISION_MIN_FORECAST_CANDIDATES = 5
 
 # Минимальный итоговый similarity-score у лучшего кандидата.
-DECISION_MIN_BEST_SIMILARITY_SCORE = 0.70
+DECISION_MIN_BEST_SIMILARITY_SCORE = 0.5
 
 # Минимальная доля кандидатов, идущих в одну сторону.
 DECISION_MIN_DIRECTIONAL_RATIO = 0.60
