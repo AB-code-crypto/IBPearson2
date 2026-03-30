@@ -1,28 +1,34 @@
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import matplotlib.pyplot as plt
 
 from core.telegram_sender import TelegramSender
 
 
+CHICAGO_TZ = ZoneInfo("America/Chicago")
+
+
 class TradeTelegramNotifier:
     # Отправляет торговые уведомления в Telegram:
-    # - текст при закрытии сделки
-    # - фото + текст при открытии сделки
-    #
-    # Канал назначения берём из settings.telegram_chat_id_common,
-    # как и просил пользователь.
+    # - подробный common-формат как и раньше
+    # - короткий trading-формат
+    # - promo-формат в тему группы
     def __init__(self, settings, instrument_code="MNQ"):
         self.settings = settings
         self.instrument_code = instrument_code
-
         self.sender = TelegramSender(settings)
-        self.chat_id = settings.telegram_chat_id_common
 
+        self.chat_id_common = settings.telegram_chat_id_common
+        self.chat_id_trading = settings.telegram_chat_id_trading
+        self.chat_id_promo = settings.telegram_chat_id_promo
+        self.thread_id_promo = settings.telegram_thread_id_promo
+
+        self.trade_db_path = settings.trade_db_path
         self.output_dir = Path(settings.trade_db_path).resolve().parent / "telegram_trade_plots"
         self.output_dir.mkdir(parents=True, exist_ok=True)
-
         self.max_plot_candidates = 5
         self.max_text_candidates = 3
 
@@ -30,17 +36,18 @@ class TradeTelegramNotifier:
         await self.sender.close()
 
     async def send_entry_message(
-            self,
-            *,
-            snapshot,
-            pearson_live_runtime,
-            trade_id,
-            local_symbol,
-            side,
-            quantity,
-            placement,
+        self,
+        *,
+        snapshot,
+        pearson_live_runtime,
+        trade_id,
+        local_symbol,
+        side,
+        quantity,
+        placement,
     ):
-        text = self._build_entry_text(
+        # 1) Подробный common-канал: как и раньше.
+        common_text = self._build_entry_text(
             snapshot=snapshot,
             trade_id=trade_id,
             local_symbol=local_symbol,
@@ -48,41 +55,87 @@ class TradeTelegramNotifier:
             quantity=quantity,
             placement=placement,
         )
-
-        photo_path = None
-
+        common_photo_path = None
         try:
-            photo_path = self._build_entry_plot(
+            common_photo_path = self._build_entry_plot(
                 snapshot=snapshot,
                 pearson_live_runtime=pearson_live_runtime,
                 trade_id=trade_id,
             )
         except Exception:
-            photo_path = None
+            common_photo_path = None
 
-        if photo_path is not None and photo_path.is_file():
-            await self.sender.send_photo_with_text(
-                photo_path=photo_path,
-                text=text,
-                chat_id=self.chat_id,
+        if self.chat_id_common:
+            if common_photo_path is not None and common_photo_path.is_file():
+                await self.sender.send_photo_with_text(
+                    photo_path=common_photo_path,
+                    text=common_text,
+                    chat_id=self.chat_id_common,
+                )
+            else:
+                await self.sender.send_text(
+                    text=common_text,
+                    chat_id=self.chat_id_common,
+                )
+
+        # 2) Короткий trading-канал: только факт открытия сделки.
+        if self.chat_id_trading:
+            trading_text = self._build_trading_entry_text(
+                trade_id=trade_id,
+                side=side,
+                local_symbol=local_symbol,
+                placement=placement,
             )
-        else:
             await self.sender.send_text(
-                text=text,
-                chat_id=self.chat_id,
+                text=trading_text,
+                chat_id=self.chat_id_trading,
             )
+
+        # 3) Promo-группа: упрощённая картинка + короткий текст в тему.
+        if self.chat_id_promo:
+            promo_text = self._build_promo_entry_text(
+                trade_id=trade_id,
+                side=side,
+                local_symbol=local_symbol,
+                quantity=quantity,
+                placement=placement,
+            )
+            promo_photo_path = None
+            try:
+                promo_photo_path = self._build_promo_entry_plot(
+                    snapshot=snapshot,
+                    pearson_live_runtime=pearson_live_runtime,
+                    trade_id=trade_id,
+                )
+            except Exception:
+                promo_photo_path = None
+
+            if promo_photo_path is not None and promo_photo_path.is_file():
+                await self.sender.send_photo_with_text(
+                    photo_path=promo_photo_path,
+                    text=promo_text,
+                    chat_id=self.chat_id_promo,
+                    message_thread_id=self.thread_id_promo,
+                )
+            else:
+                await self.sender.send_text(
+                    text=promo_text,
+                    chat_id=self.chat_id_promo,
+                    message_thread_id=self.thread_id_promo,
+                )
 
     async def send_exit_message(
-            self,
-            *,
-            snapshot,
-            trade_id,
-            entry_side,
-            exit_side,
-            quantity,
-            placement,
+        self,
+        *,
+        snapshot,
+        trade_id,
+        entry_side,
+        exit_side,
+        quantity,
+        placement,
     ):
-        text = self._build_exit_text(
+        # 1) Подробный common-канал: как и раньше.
+        common_text = self._build_exit_text(
             snapshot=snapshot,
             trade_id=trade_id,
             entry_side=entry_side,
@@ -90,29 +143,60 @@ class TradeTelegramNotifier:
             quantity=quantity,
             placement=placement,
         )
+        if self.chat_id_common:
+            await self.sender.send_text(
+                text=common_text,
+                chat_id=self.chat_id_common,
+            )
 
-        await self.sender.send_text(
-            text=text,
-            chat_id=self.chat_id,
-        )
+        trade_row = self._load_trade_row(trade_id)
+
+        # 2) Короткий trading-канал.
+        if self.chat_id_trading:
+            trading_text = self._build_trading_exit_text(
+                trade_id=trade_id,
+                entry_side=entry_side,
+                placement=placement,
+                trade_row=trade_row,
+            )
+            await self.sender.send_text(
+                text=trading_text,
+                chat_id=self.chat_id_trading,
+            )
+
+        # 3) Promo-группа в тему.
+        if self.chat_id_promo:
+            promo_text = self._build_promo_exit_text(
+                trade_id=trade_id,
+                entry_side=entry_side,
+                quantity=quantity,
+                placement=placement,
+                trade_row=trade_row,
+            )
+            await self.sender.send_text(
+                text=promo_text,
+                chat_id=self.chat_id_promo,
+                message_thread_id=self.thread_id_promo,
+            )
 
     def _build_entry_text(
-            self,
-            *,
-            snapshot,
-            trade_id,
-            local_symbol,
-            side,
-            quantity,
-            placement,
+        self,
+        *,
+        snapshot,
+        trade_id,
+        local_symbol,
+        side,
+        quantity,
+        placement,
     ):
         best_similarity_score = None
         best_candidate_lines = []
-
         if snapshot.ranked_similarity_candidates:
             best_similarity_score = snapshot.ranked_similarity_candidates[0]["final_score"]
-
-            for index, item in enumerate(snapshot.ranked_similarity_candidates[: self.max_text_candidates], start=1):
+            for index, item in enumerate(
+                snapshot.ranked_similarity_candidates[: self.max_text_candidates],
+                start=1,
+            ):
                 best_candidate_lines.append(
                     f"{index}) {item['hour_start_ct']} CT | "
                     f"score={item['final_score']:.4f} | "
@@ -131,17 +215,7 @@ class TradeTelegramNotifier:
                 f"median={snapshot.forecast_summary['median_final_move'] * 100:+.3f}%"
             )
 
-        decision_reason = "-"
-        if snapshot.decision_result is not None:
-            decision_reason = snapshot.decision_result["reason"]
-
-        entry_time = self._format_utc_ts(
-            int(placement.done.checked_at_utc.timestamp()) if placement.done is not None
-            else int(placement.receipt.placed_at_utc.timestamp())
-        )
-
         candidates_block = "\n".join(best_candidate_lines) if best_candidate_lines else "нет"
-
         best_similarity_text = "-"
         if best_similarity_score is not None:
             best_similarity_text = f"{best_similarity_score:.4f}"
@@ -152,33 +226,26 @@ class TradeTelegramNotifier:
             f"Инструмент: {local_symbol}\n"
             f"Сторона: {side}\n"
             f"Количество: {quantity}\n"
-            # f"Время UTC: {entry_time}\n"
             f"Час CT: {snapshot.hour_start_ct}\n"
             f"bar_index: {snapshot.current_bar_index}\n"
             f"Цена входа: {placement.avg_fill_price}\n"
             f"Комиссия входа: {placement.total_commission}\n"
             f"Направление: {snapshot.decision_result['decision'] if snapshot.decision_result else '-'}\n"
-            # f"Причина: {decision_reason}\n"
             f"Лучший similarity-score: {best_similarity_text}\n"
             f"Forecast: {forecast_text}\n"
             f"Лучшие кандидаты:\n{candidates_block}"
         )
 
     def _build_exit_text(
-            self,
-            *,
-            snapshot,
-            trade_id,
-            entry_side,
-            exit_side,
-            quantity,
-            placement,
+        self,
+        *,
+        snapshot,
+        trade_id,
+        entry_side,
+        exit_side,
+        quantity,
+        placement,
     ):
-        exit_time = self._format_utc_ts(
-            int(placement.done.checked_at_utc.timestamp()) if placement.done is not None
-            else int(placement.receipt.placed_at_utc.timestamp())
-        )
-
         return (
             f"ЗАКРЫТА СДЕЛКА\n"
             f"trade_id: {trade_id}\n"
@@ -186,18 +253,68 @@ class TradeTelegramNotifier:
             f"Сторона входа: {entry_side}\n"
             f"Сторона выхода: {exit_side}\n"
             f"Количество: {quantity}\n"
-            # f"Время UTC: {exit_time}\n"
             f"Час CT: {snapshot.hour_start_ct}\n"
-            # f"bar_index: {snapshot.current_bar_index}\n"
             f"Цена выхода: {placement.avg_fill_price}\n"
             f"Комиссия выхода: {placement.total_commission}\n"
             f"Realized PnL: {placement.realized_pnl}"
         )
 
+    def _build_trading_entry_text(self, *, trade_id, side, local_symbol, placement):
+        entry_time_ct = self._format_ct_from_placement(placement)
+        return (
+            f"ОТКРЫТА СДЕЛКА\n"
+            f"trade_id: {trade_id}\n"
+            f"Инструмент: {local_symbol}\n"
+            f"Направление: {side}\n"
+            f"Время CT: {entry_time_ct}\n"
+            f"Цена входа: {placement.avg_fill_price}"
+        )
+
+    def _build_trading_exit_text(self, *, trade_id, entry_side, placement, trade_row):
+        exit_time_ct = self._format_ct_from_placement(placement)
+        entry_price = self._safe_trade_value(trade_row, "entry_avg_fill_price")
+        return (
+            f"ЗАКРЫТА СДЕЛКА\n"
+            f"trade_id: {trade_id}\n"
+            f"Направление: {entry_side}\n"
+            f"Время CT: {exit_time_ct}\n"
+            f"Цена входа: {entry_price}\n"
+            f"Цена выхода: {placement.avg_fill_price}\n"
+            f"PnL: {placement.realized_pnl}"
+        )
+
+    def _build_promo_entry_text(self, *, trade_id, side, local_symbol, quantity, placement):
+        entry_time_ct = self._format_ct_from_placement(placement)
+        return (
+            f"Открыта сделка\n"
+            f"Сделка №{trade_id}\n"
+            f"Инструмент: {local_symbol}\n"
+            f"Направление: {side}\n"
+            f"Время CT: {entry_time_ct}\n"
+            f"Объём: {quantity}\n"
+            f"Цена входа: {placement.avg_fill_price}"
+        )
+
+    def _build_promo_exit_text(self, *, trade_id, entry_side, quantity, placement, trade_row):
+        exit_time_ct = self._format_ct_from_placement(placement)
+        entry_price = self._safe_trade_value(trade_row, "entry_avg_fill_price")
+        total_commissions = self._safe_trade_value(trade_row, "commissions_total")
+        realized_pnl = self._safe_trade_value(trade_row, "realized_pnl", fallback=placement.realized_pnl)
+        return (
+            f"Закрыта сделка\n"
+            f"Сделка №{trade_id}\n"
+            f"Направление: {entry_side}\n"
+            f"Время CT: {exit_time_ct}\n"
+            f"Объём: {quantity}\n"
+            f"Цена входа: {entry_price}\n"
+            f"Цена выхода: {placement.avg_fill_price}\n"
+            f"PnL: {realized_pnl}\n"
+            f"Комиссия: {total_commissions}"
+        )
+
     def _build_entry_plot(self, *, snapshot, pearson_live_runtime, trade_id):
         if pearson_live_runtime is None:
             return None
-
         if pearson_live_runtime.current_hour is None:
             return None
 
@@ -207,13 +324,11 @@ class TradeTelegramNotifier:
 
         ranked_similarity_candidates = snapshot.ranked_similarity_candidates[: self.max_plot_candidates]
         prepared_hours_map = pearson_live_runtime.current_hour_prepared_hours_map
-
         output_path = self.output_dir / (
             f"trade_entry_{trade_id}_{snapshot.hour_start_ts}_{snapshot.current_bar_index}.png"
         )
 
         plt.figure(figsize=(14, 8))
-
         current_x = list(range(len(current_values)))
         plt.plot(
             current_x,
@@ -224,13 +339,10 @@ class TradeTelegramNotifier:
 
         for rank, item in enumerate(ranked_similarity_candidates, start=1):
             hour_start_ts = item["hour_start_ts"]
-
             if hour_start_ts not in prepared_hours_map:
                 continue
-
             candidate_y = prepared_hours_map[hour_start_ts]["y"]
             candidate_x = list(range(len(candidate_y)))
-
             plt.plot(
                 candidate_x,
                 candidate_y,
@@ -246,7 +358,6 @@ class TradeTelegramNotifier:
         if snapshot.forecast_summary is not None:
             mean_future_path = snapshot.forecast_summary["mean_future_path"]
             median_future_path = snapshot.forecast_summary["median_future_path"]
-
             if mean_future_path:
                 start_x = snapshot.current_bar_index + 1
                 future_x = list(range(start_x, start_x + len(mean_future_path)))
@@ -258,7 +369,6 @@ class TradeTelegramNotifier:
                     linestyle="--",
                     label="Средний future-path",
                 )
-
             if median_future_path:
                 start_x = snapshot.current_bar_index + 1
                 future_x = list(range(start_x, start_x + len(median_future_path)))
@@ -277,11 +387,9 @@ class TradeTelegramNotifier:
             linewidth=1.5,
             label=f"Точка входа: bar_index={snapshot.current_bar_index}",
         )
-
         title_reason = "-"
         if snapshot.decision_result is not None:
             title_reason = snapshot.decision_result["decision"]
-
         plt.title(
             f"Trade Entry | {title_reason} | CT {snapshot.hour_start_ct} | trade_id={trade_id}"
         )
@@ -289,24 +397,128 @@ class TradeTelegramNotifier:
         plt.ylabel("y")
         plt.legend(loc="best", fontsize=8)
         plt.grid(True)
-
         plt.tight_layout()
         plt.savefig(output_path, dpi=150)
         plt.close()
-
         return output_path
 
-    def _build_forecast_direction(self, forecast_summary):
+    def _build_promo_entry_plot(self, *, snapshot, pearson_live_runtime, trade_id):
+        if pearson_live_runtime is None:
+            return None
+        if pearson_live_runtime.current_hour is None:
+            return None
+
+        current_values = list(pearson_live_runtime.current_hour.x)
+        if not current_values:
+            return None
+
+        output_path = self.output_dir / (
+            f"trade_entry_promo_{trade_id}_{snapshot.hour_start_ts}_{snapshot.current_bar_index}.png"
+        )
+
+        plt.figure(figsize=(12, 7))
+        current_x = list(range(len(current_values)))
+        plt.plot(
+            current_x,
+            current_values,
+            linewidth=2.5,
+            label=f"Текущий час | CT {snapshot.hour_start_ct}",
+        )
+
+        entry_x = snapshot.current_bar_index
+        entry_y = current_values[-1]
+        plt.scatter([entry_x], [entry_y], s=60, label="Точка входа")
+        plt.axvline(
+            x=entry_x,
+            linestyle="--",
+            linewidth=1.5,
+            label=f"Вход | bar_index={entry_x}",
+        )
+
+        if snapshot.forecast_summary is not None:
+            mean_future_path = snapshot.forecast_summary.get("mean_future_path") or []
+            median_future_path = snapshot.forecast_summary.get("median_future_path") or []
+
+            if mean_future_path:
+                start_x = entry_x + 1
+                future_x = list(range(start_x, start_x + len(mean_future_path)))
+                future_y = [current_values[-1] + value for value in mean_future_path]
+                plt.plot(
+                    future_x,
+                    future_y,
+                    linewidth=2.0,
+                    linestyle="--",
+                    label="Прогноз 1",
+                )
+
+            if median_future_path:
+                start_x = entry_x + 1
+                future_x = list(range(start_x, start_x + len(median_future_path)))
+                future_y = [current_values[-1] + value for value in median_future_path]
+                plt.plot(
+                    future_x,
+                    future_y,
+                    linewidth=2.0,
+                    linestyle=":",
+                    label="Прогноз 2",
+                )
+
+        decision = "-"
+        if snapshot.decision_result is not None:
+            decision = snapshot.decision_result.get("decision", "-")
+        plt.title(f"Сделка | {decision} | CT {snapshot.hour_start_ct} | №{trade_id}")
+        plt.xlabel("bar_index")
+        plt.ylabel("y")
+        plt.legend(loc="best", fontsize=9)
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150)
+        plt.close()
+        return output_path
+
+    @staticmethod
+    def _build_forecast_direction(forecast_summary):
         mean_final_move = forecast_summary["mean_final_move"]
         median_final_move = forecast_summary["median_final_move"]
-
         if mean_final_move > 0.0 and median_final_move > 0.0:
             return "UP"
-
         if mean_final_move < 0.0 and median_final_move < 0.0:
             return "DOWN"
-
         return "MIXED"
 
-    def _format_utc_ts(self, ts):
+    @staticmethod
+    def _format_utc_ts(ts):
         return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    @staticmethod
+    def _format_ct_ts(ts):
+        return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(CHICAGO_TZ).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+    def _format_ct_from_placement(self, placement):
+        ts = int(placement.done.checked_at_utc.timestamp()) if placement.done is not None else int(
+            placement.receipt.placed_at_utc.timestamp()
+        )
+        return self._format_ct_ts(ts)
+
+    def _load_trade_row(self, trade_id):
+        conn = sqlite3.connect(self.trade_db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                "SELECT * FROM trades WHERE trade_id = ?",
+                (trade_id,),
+            ).fetchone()
+            return row
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _safe_trade_value(row, key, fallback="-"):
+        if row is None:
+            return fallback
+        value = row[key]
+        if value is None:
+            return fallback
+        return value
