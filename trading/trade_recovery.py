@@ -543,6 +543,8 @@ async def trade_reconcile_task(
 
     try:
         while True:
+            await asyncio.sleep(interval_seconds)
+
             try:
                 if ib.isConnected():
                     summary = reconcile_trade_state_once(
@@ -588,8 +590,6 @@ async def trade_reconcile_task(
                         last_signature = signature
             except Exception as exc:
                 log_warning(logger, f"Ошибка в trade_reconcile_task: {exc}", to_telegram=True)
-
-            await asyncio.sleep(interval_seconds)
     except asyncio.CancelledError:
         log_info(
             logger,
