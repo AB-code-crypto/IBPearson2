@@ -3,10 +3,8 @@ from pathlib import Path
 
 # Лимит обычного текстового сообщения Telegram.
 TELEGRAM_TEXT_LIMIT = 4096
-
 # Лимит подписи к картинке в Telegram.
 TELEGRAM_CAPTION_LIMIT = 1024
-
 # Общий timeout на один HTTP-запрос в Bot API.
 TELEGRAM_REQUEST_TIMEOUT_SECONDS = 20
 
@@ -15,17 +13,13 @@ class TelegramSender:
     def __init__(self, settings):
         # Токен бота Telegram.
         self.bot_token = settings.telegram_bot_token
-
         # Канал по умолчанию для технических сообщений и логов.
         self.default_chat_id = settings.telegram_chat_id_tech
-
         # Если токен или chat_id по умолчанию не заданы,
         # модуль Telegram считаем выключенным.
         self.enabled = bool(self.bot_token and self.default_chat_id)
-
         # Базовый URL Bot API.
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
-
         # HTTP-сессия создаётся лениво при первом запросе.
         self.session = None
 
@@ -79,12 +73,6 @@ class TelegramSender:
 
         return chunks
 
-    @staticmethod
-    def _apply_thread_id(payload, message_thread_id):
-        if message_thread_id is not None:
-            payload["message_thread_id"] = int(message_thread_id)
-        return payload
-
     async def _post_json(self, method, payload):
         # Делаем простой JSON POST в Bot API.
         # Ничего не валидируем по ответу Telegram, просто отправляем.
@@ -107,7 +95,6 @@ class TelegramSender:
             return False
 
         path = Path(photo_path)
-
         # Если файла нет — это уже локальная ошибка, её не скрываем.
         if not path.is_file():
             raise FileNotFoundError(f"Файл картинки не найден: {path}")
@@ -152,10 +139,13 @@ class TelegramSender:
                 "chat_id": resolved_chat_id,
                 "text": chunk,
             }
-            payload = self._apply_thread_id(payload, message_thread_id)
+            if message_thread_id is not None:
+                payload["message_thread_id"] = int(message_thread_id)
+
             ok = await self._post_json("sendMessage", payload)
             if not ok:
                 result = False
+
         return result
 
     async def send_photo(self, photo_path, chat_id=None, message_thread_id=None):
