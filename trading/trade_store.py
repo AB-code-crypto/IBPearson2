@@ -3,6 +3,26 @@ import sqlite3
 from contextlib import contextmanager
 
 
+ACTIVE_TRADE_STATUSES = (
+    "NEW",
+    "ENTRY_SUBMITTED",
+    "OPEN",
+    "EXIT_SUBMITTED",
+    "EXIT_ERROR",
+)
+
+TERMINAL_TRADE_STATUSES = (
+    "CLOSED",
+    "CANCELLED",
+    "ERROR",
+    "EXTERNALLY_CLOSED",
+)
+
+
+def _status_placeholders(statuses):
+    return ", ".join("?" for _ in statuses)
+
+
 @contextmanager
 def _trade_db_connection(db_path):
     """Контекст подключения к торговой БД с едиными настройками."""
@@ -204,31 +224,36 @@ def get_trade_by_id(db_path, trade_id):
 
 
 def get_open_trade_for_instrument(db_path, instrument_code):
-    """Получаем текущую незакрытую сделку по инструменту."""
+    """Получаем текущую активную сделку по инструменту."""
+    statuses = ACTIVE_TRADE_STATUSES
+    placeholders = _status_placeholders(statuses)
     return _fetch_one_dict(
         db_path,
-        """
+        f"""
         SELECT *
         FROM trades
         WHERE instrument_code = ?
-          AND status NOT IN ('CLOSED', 'CANCELLED')
+          AND status IN ({placeholders})
         ORDER BY trade_id DESC
         LIMIT 1;
         """,
-        (instrument_code,),
+        (instrument_code, *statuses),
     )
 
 
 def list_open_trades(db_path):
-    """Получаем все незакрытые сделки."""
+    """Получаем все активные сделки."""
+    statuses = ACTIVE_TRADE_STATUSES
+    placeholders = _status_placeholders(statuses)
     return _fetch_all_dicts(
         db_path,
-        """
+        f"""
         SELECT *
         FROM trades
-        WHERE status NOT IN ('CLOSED', 'CANCELLED')
+        WHERE status IN ({placeholders})
         ORDER BY trade_id;
         """,
+        statuses,
     )
 
 
@@ -412,7 +437,7 @@ def mark_trade_error(
     status="ERROR",
     error_text=None,
 ):
-    """Переводим сделку в ошибочное состояние."""
+    """Переводим сделку в терминальное неуспешное состояние."""
     _execute_write(
         db_path,
         """

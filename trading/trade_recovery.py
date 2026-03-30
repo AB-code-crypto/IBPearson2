@@ -296,8 +296,11 @@ def _handle_local_trade_without_broker_position(*, settings, context: dict[str, 
     mark_trade_error(
         settings.trade_db_path,
         trade_id=trade_id,
-        status="ERROR",
-        error_text="Startup/periodic reconcile: локально сделка открыта, но у брокера позиции нет",
+        status="EXTERNALLY_CLOSED",
+        error_text=(
+            "Startup/periodic reconcile: локальная сделка завершена вне робота "
+            "(у брокера позиции нет)"
+        ),
     )
     _append_recovery_event(
         settings,
@@ -319,8 +322,8 @@ def _handle_local_trade_without_broker_position(*, settings, context: dict[str, 
         context=context,
         open_trade=open_trade,
         cancel_result=cancel_result,
-        action="MARK_ERROR_AND_CLEAR",
-        message="Локальная сделка помечена как ERROR: у брокера позиции нет",
+        action="MARK_EXTERNALLY_CLOSED_AND_CLEAR",
+        message="Локальная сделка завершена вне робота: у брокера позиции нет",
     )
 
 
