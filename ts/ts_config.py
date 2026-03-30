@@ -11,13 +11,12 @@
 # Важно:
 # - PEARSON_EVAL_START_MINUTE включается;
 # - PEARSON_EVAL_END_MINUTE используется как правая граница "не включая".
-#
+
 # Значения по умолчанию:
 # - старт поиска после первых 30 минут часа;
 # - остановка поиска после первых 50 минут часа.
 #
 # Итого получаем окно длиной ровно 20 минут.
-
 PEARSON_BAR_INTERVAL_SECONDS = 5
 PEARSON_HOUR_SECONDS = 3600
 PEARSON_HOUR_BAR_COUNT = PEARSON_HOUR_SECONDS // PEARSON_BAR_INTERVAL_SECONDS
@@ -57,26 +56,24 @@ def pearson_eval_end_bar_count_exclusive():
 # Сначала первый Пирсон отбирает осмысленный shortlist кандидатов.
 # И только потом на этот shortlist накладывается второй шаг:
 # similarity score по дополнительным фильтрам.
-
 PEARSON_SHORTLIST_MIN_CORRELATION = 0.80
 PEARSON_SHORTLIST_TOP_N = 30
 
 # ============================================================
 # Настройки второго шага: score похожести кандидатов
 # ============================================================
-
 SIMILARITY_PEARSON_SCORE_ZERO_AT = 0.50
 SIMILARITY_PEARSON_SCORE_ONE_AT = 1.00
 
 SIMILARITY_RANGE_DISTANCE_ZERO_AT = 0.50
 SIMILARITY_NET_MOVE_DISTANCE_ZERO_AT = 0.50
+SIMILARITY_RANGE_POSITION_DISTANCE_ZERO_AT = 0.50
 SIMILARITY_MEAN_ABS_DIFF_DISTANCE_ZERO_AT = 0.50
 SIMILARITY_EFFICIENCY_DISTANCE_ZERO_AT = 0.50
 
 # ============================================================
 # Веса фильтров похожести
 # ============================================================
-
 SIMILARITY_WEIGHT_PEARSON = 4.0
 SIMILARITY_WEIGHT_RANGE = 2.0
 SIMILARITY_WEIGHT_NET_MOVE = 2.0
@@ -85,7 +82,12 @@ SIMILARITY_WEIGHT_EFFICIENCY = 1.0
 
 
 def similarity_total_weight():
-    # Сумма весов всех фильтров похожести.
+    # Сумма весов всех фильтров похожести, которые сейчас реально
+    # участвуют в final_score.
+    #
+    # Важно:
+    # range_position уже реализован в коде, но пока работает в теневом
+    # режиме и в final_score не включён.
     return (
             SIMILARITY_WEIGHT_PEARSON
             + SIMILARITY_WEIGHT_RANGE
@@ -101,7 +103,6 @@ def similarity_total_weight():
 #
 # После similarity ranking берём только лучшие historical-кандидаты
 # и по ним строим сводный прогноз future-path.
-
 FORECAST_TOP_N_AFTER_SIMILARITY = 5
 
 # ============================================================
@@ -120,8 +121,7 @@ FORECAST_TOP_N_AFTER_SIMILARITY = 5
 # Это первый и намеренно простой вариант правил.
 # Все границы вынесены сюда, чтобы их можно было спокойно менять
 # без переписывания логики.
-
-DECISION_MIN_SIMILARITY_CANDIDATES =5
+DECISION_MIN_SIMILARITY_CANDIDATES = 5
 DECISION_MIN_FORECAST_CANDIDATES = 5
 
 # Минимальный итоговый similarity-score у лучшего кандидата.

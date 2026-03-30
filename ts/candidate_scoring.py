@@ -5,6 +5,7 @@ from ts.candidate_features import (
     calc_path_efficiency,
     calc_pearson_corr,
     calc_range,
+    calc_range_position,
 )
 from ts.ts_config import (
     SIMILARITY_EFFICIENCY_DISTANCE_ZERO_AT,
@@ -13,6 +14,7 @@ from ts.ts_config import (
     SIMILARITY_PEARSON_SCORE_ONE_AT,
     SIMILARITY_PEARSON_SCORE_ZERO_AT,
     SIMILARITY_RANGE_DISTANCE_ZERO_AT,
+    SIMILARITY_RANGE_POSITION_DISTANCE_ZERO_AT,
     SIMILARITY_WEIGHT_EFFICIENCY,
     SIMILARITY_WEIGHT_MEAN_ABS_DIFF,
     SIMILARITY_WEIGHT_NET_MOVE,
@@ -30,12 +32,19 @@ def calc_relative_distance(value_a, value_b, eps=1e-12):
     return abs(value_a - value_b) / denominator
 
 
+def calc_absolute_distance(value_a, value_b):
+    # Абсолютное отличие двух значений.
+    #
+    # Используется для признаков, уже нормализованных в диапазон [0, 1].
+    return abs(value_a - value_b)
+
+
 def calc_score_from_value(value, score_zero_at, score_one_at):
     # Переводим "чем больше, тем лучше" в score 0..1.
     #
     # Логика:
     # - value <= score_zero_at -> 0
-    # - value >= score_one_at  -> 1
+    # - value >= score_one_at -> 1
     # - между ними линейная интерполяция
     if score_one_at <= score_zero_at:
         raise ValueError("score_one_at должен быть строго больше score_zero_at")
@@ -53,7 +62,7 @@ def calc_score_from_distance(distance, distance_zero_at):
     # Переводим "чем меньше, тем лучше" в score 0..1.
     #
     # Логика:
-    # - distance <= 0                -> 1
+    # - distance <= 0 -> 1
     # - distance >= distance_zero_at -> 0
     # - между ними линейная интерполяция
     if distance_zero_at <= 0.0:
@@ -96,6 +105,7 @@ def build_similarity_features(values):
     return {
         "range": calc_range(values),
         "net_move": calc_net_move(values),
+        "range_position": calc_range_position(values),
         "mean_abs_diff": calc_mean_abs_diff(diff_values),
         "path_efficiency": calc_path_efficiency(values),
     }
@@ -126,6 +136,10 @@ def evaluate_similarity_between_prefixes(current_values, candidate_values):
         current_features["net_move"],
         candidate_features["net_move"],
     )
+    range_position_distance = calc_absolute_distance(
+        current_features["range_position"],
+        candidate_features["range_position"],
+    )
     mean_abs_diff_distance = calc_relative_distance(
         current_features["mean_abs_diff"],
         candidate_features["mean_abs_diff"],
@@ -148,6 +162,10 @@ def evaluate_similarity_between_prefixes(current_values, candidate_values):
         distance=net_move_distance,
         distance_zero_at=SIMILARITY_NET_MOVE_DISTANCE_ZERO_AT,
     )
+    range_position_score = calc_score_from_distance(
+        distance=range_position_distance,
+        distance_zero_at=SIMILARITY_RANGE_POSITION_DISTANCE_ZERO_AT,
+    )
     mean_abs_diff_score = calc_score_from_distance(
         distance=mean_abs_diff_distance,
         distance_zero_at=SIMILARITY_MEAN_ABS_DIFF_DISTANCE_ZERO_AT,
@@ -169,29 +187,27 @@ def evaluate_similarity_between_prefixes(current_values, candidate_values):
 
     return {
         "pearson": pearson,
-
         "current_range": current_features["range"],
         "candidate_range": candidate_features["range"],
         "range_distance": range_distance,
-
         "current_net_move": current_features["net_move"],
         "candidate_net_move": candidate_features["net_move"],
         "net_move_distance": net_move_distance,
-
+        "current_range_position": current_features["range_position"],
+        "candidate_range_position": candidate_features["range_position"],
+        "range_position_distance": range_position_distance,
         "current_mean_abs_diff": current_features["mean_abs_diff"],
         "candidate_mean_abs_diff": candidate_features["mean_abs_diff"],
         "mean_abs_diff_distance": mean_abs_diff_distance,
-
         "current_path_efficiency": current_features["path_efficiency"],
         "candidate_path_efficiency": candidate_features["path_efficiency"],
         "efficiency_distance": efficiency_distance,
-
         "pearson_score": pearson_score,
         "range_score": range_score,
         "net_move_score": net_move_score,
+        "range_position_score": range_position_score,
         "mean_abs_diff_score": mean_abs_diff_score,
         "efficiency_score": efficiency_score,
-
         "final_score": final_score,
     }
 
@@ -199,7 +215,6 @@ def evaluate_similarity_between_prefixes(current_values, candidate_values):
 def evaluate_prepared_candidate_similarity(current_values, prepared_hour_payload):
     # Считаем score похожести для одного prepared-кандидата.
     candidate_values = prepared_hour_payload["y"][: len(current_values)]
-
     result = evaluate_similarity_between_prefixes(
         current_values=current_values,
         candidate_values=candidate_values,

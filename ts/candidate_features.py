@@ -44,6 +44,31 @@ def calc_net_move(values):
     return values[-1] - values[0]
 
 
+def calc_range_position(values):
+    # Считаем положение последней точки внутри уже пройденного диапазона.
+    #
+    # Формула:
+    # (last(values) - min(values)) / (max(values) - min(values))
+    #
+    # Интерпретация:
+    # - 0.0 -> закончили на минимуме диапазона
+    # - 1.0 -> закончили на максимуме диапазона
+    # - 0.5 -> закончили примерно в середине диапазона
+    #
+    # Если диапазон нулевой, возвращаем 0.5 как нейтральное значение.
+    if not values:
+        return 0.5
+
+    min_value = min(values)
+    max_value = max(values)
+    value_range = max_value - min_value
+
+    if value_range == 0.0:
+        return 0.5
+
+    return (values[-1] - min_value) / value_range
+
+
 def calc_mean_abs_diff(diff_values):
     # Считаем среднее абсолютное приращение.
     #
@@ -122,7 +147,6 @@ def calc_pearson_corr(values_a, values_b):
         sum_ab += value_a * value_b
 
     numerator = (n * sum_ab) - (sum_a * sum_b)
-
     left = (n * sum_a2) - (sum_a * sum_a)
     right = (n * sum_b2) - (sum_b * sum_b)
 
