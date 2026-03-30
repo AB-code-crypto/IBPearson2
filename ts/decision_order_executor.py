@@ -33,11 +33,11 @@ class DecisionOrderState:
 
 class DecisionOrderExecutor:
     def __init__(
-        self,
-        *,
-        settings,
-        order_service: OrderService,
-        instrument_code: str = "MNQ",
+            self,
+            *,
+            settings,
+            order_service: OrderService,
+            instrument_code: str = "MNQ",
     ):
         self.settings = settings
         self.order_service = order_service
@@ -59,12 +59,12 @@ class DecisionOrderExecutor:
         self.state = DecisionOrderState()
 
     def hydrate_recovered_state(
-        self,
-        *,
-        current_trade_id,
-        position_side,
-        position_qty,
-        entry_hour_start_ts,
+            self,
+            *,
+            current_trade_id,
+            position_side,
+            position_qty,
+            entry_hour_start_ts,
     ):
         """Загружаем восстановленное состояние из recovery/reconcile слоя."""
         self.state = DecisionOrderState(
@@ -252,7 +252,23 @@ class DecisionOrderExecutor:
         if self.state.last_entry_attempt_hour_start_ts == snapshot.hour_start_ts:
             return False
 
+        if self._is_friday_last_trading_hour(snapshot):
+            return False
+
         return True
+
+    def _is_friday_last_trading_hour(self, snapshot) -> bool:
+        hour_start_ct = getattr(snapshot, "hour_start_ct", None)
+        hour_slot_ct = getattr(snapshot, "hour_slot_ct", None)
+        if hour_start_ct is None or hour_slot_ct is None:
+            return False
+
+        try:
+            dt_ct = datetime.strptime(hour_start_ct, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return False
+
+        return dt_ct.weekday() == 4 and int(hour_slot_ct) == 15
 
     def _should_exit(self, snapshot) -> bool:
         if self.state.position_side is None:
@@ -262,8 +278,8 @@ class DecisionOrderExecutor:
 
         if snapshot.hour_start_ts == self.state.entry_hour_start_ts:
             return (
-                snapshot.current_bar_index is not None
-                and snapshot.current_bar_index >= self.exit_bar_index
+                    snapshot.current_bar_index is not None
+                    and snapshot.current_bar_index >= self.exit_bar_index
             )
 
         return snapshot.hour_start_ts != self.state.entry_hour_start_ts
@@ -393,13 +409,13 @@ class DecisionOrderExecutor:
         )
 
     def _record_exit_filled(
-        self,
-        *,
-        trade_id,
-        snapshot,
-        exit_side,
-        placement,
-        total_commissions,
+            self,
+            *,
+            trade_id,
+            snapshot,
+            exit_side,
+            placement,
+            total_commissions,
     ):
         exit_filled_ts = self._extract_done_ts(placement)
         exit_filled_time = self._format_utc_ts(exit_filled_ts)
@@ -434,14 +450,14 @@ class DecisionOrderExecutor:
         return previous_commissions + float(placement.total_commission or 0.0)
 
     async def _send_entry_notification(
-        self,
-        *,
-        snapshot,
-        pearson_live_runtime,
-        trade_id,
-        local_symbol,
-        decision,
-        placement,
+            self,
+            *,
+            snapshot,
+            pearson_live_runtime,
+            trade_id,
+            local_symbol,
+            decision,
+            placement,
     ):
         try:
             await self.telegram_notifier.send_entry_message(
