@@ -23,6 +23,7 @@ from core.logger import (
 )
 from core.telegram_sender import TelegramSender
 from trading.order_service import OrderService
+from trading.trade_performance_summary import trade_performance_summary_task
 from trading.trade_recovery import build_recovery_signature, reconcile_trade_state_once, trade_reconcile_task
 from ts.decision_order_executor import DecisionOrderExecutor
 from ts.pearson_live import PearsonLiveRuntime
@@ -169,6 +170,14 @@ def _start_background_tasks(
             ),
             name="trade_reconcile_task",
         ),
+        "trade_summary": asyncio.create_task(
+            trade_performance_summary_task(
+                settings=settings,
+                instrument_code="MNQ",
+                poll_interval_seconds=20.0,
+            ),
+            name="trade_performance_summary_task",
+        ),
     }
 
 
@@ -197,6 +206,7 @@ async def _shutdown_background_tasks(tasks: dict[str, asyncio.Task]) -> None:
     shutdown_order = (
         "prepared_sync",
         "trade_reconcile",
+        "trade_summary",
         "realtime",
         "heartbeat",
         "monitor",
