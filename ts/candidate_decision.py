@@ -3,6 +3,7 @@ from ts.ts_config import (
     DECISION_MIN_BEST_SIMILARITY_SCORE,
     DECISION_MIN_DIRECTIONAL_RATIO,
     DECISION_MIN_FORECAST_CANDIDATES,
+    DECISION_MIN_LAST_SIMILARITY_SCORE,
     DECISION_MIN_MEAN_FINAL_MOVE_ABS,
     DECISION_MIN_MEDIAN_FINAL_MOVE_ABS,
     DECISION_MIN_SIMILARITY_CANDIDATES,
@@ -14,10 +15,8 @@ from ts.ts_config import (
 def get_move_direction(value):
     if value > 0.0:
         return "UP"
-
     if value < 0.0:
         return "DOWN"
-
     return "FLAT"
 
 
@@ -39,9 +38,11 @@ def build_trade_result(decision, reason, diagnostics):
 
 def build_decision_diagnostics(ranked_similarity_candidates, forecast_summary):
     best_similarity_score = None
+    last_similarity_score = None
 
     if ranked_similarity_candidates:
         best_similarity_score = ranked_similarity_candidates[0]["final_score"]
+        last_similarity_score = ranked_similarity_candidates[-1]["final_score"]
 
     mean_final_move = 0.0
     median_final_move = 0.0
@@ -64,6 +65,7 @@ def build_decision_diagnostics(ranked_similarity_candidates, forecast_summary):
         "similarity_candidate_count": len(ranked_similarity_candidates),
         "forecast_candidate_count": candidate_count,
         "best_similarity_score": best_similarity_score,
+        "last_similarity_score": last_similarity_score,
         "mean_final_move": mean_final_move,
         "median_final_move": median_final_move,
         "mean_direction": get_move_direction(mean_final_move),
@@ -118,7 +120,6 @@ def evaluate_decision_layer(ranked_similarity_candidates, forecast_summary):
         )
 
     best_similarity_score = diagnostics["best_similarity_score"]
-
     if best_similarity_score is None:
         return build_no_trade_result(
             reason="Не удалось определить best_similarity_score",
@@ -130,6 +131,22 @@ def evaluate_decision_layer(ranked_similarity_candidates, forecast_summary):
             reason=(
                 f"Лучший similarity-score слишком мал: "
                 f"{best_similarity_score:.4f} < {DECISION_MIN_BEST_SIMILARITY_SCORE:.4f}"
+            ),
+            diagnostics=diagnostics,
+        )
+
+    last_similarity_score = diagnostics["last_similarity_score"]
+    if last_similarity_score is None:
+        return build_no_trade_result(
+            reason="Не удалось определить last_similarity_score",
+            diagnostics=diagnostics,
+        )
+
+    if last_similarity_score < DECISION_MIN_LAST_SIMILARITY_SCORE:
+        return build_no_trade_result(
+            reason=(
+                f"Последний similarity-score в top-N слишком мал: "
+                f"{last_similarity_score:.4f} < {DECISION_MIN_LAST_SIMILARITY_SCORE:.4f}"
             ),
             diagnostics=diagnostics,
         )
