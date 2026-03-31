@@ -239,6 +239,75 @@ class PearsonLiveRuntime:
         finally:
             prepared_conn.close()
 
+    def _load_existing_current_hour_bars_from_db(self, from_bar_time_ts, to_bar_time_ts_exclusive):
+        # Загружаем уже существующие в price DB полностью собранные бары
+        # текущего часа в диапазоне [from_bar_time_ts, to_bar_time_ts_exclusive).
+        if to_bar_time_ts_exclusive <= from_bar_time_ts:
+            return []
+
+        price_conn = sqlite3.connect(self.settings.price_db_path)
+        try:
+            price_conn.row_factory = sqlite3.Row
+            price_conn.execute("PRAGMA busy_timeout=5000;")
+
+            sql = f"""
+                SELECT
+                    bar_time_ts,
+                    bar_time_ts_ct,
+                    bar_time_ct,
+                    ask_open,
+                    bid_open,
+                    ask_close,
+                    bid_close
+                FROM {self.table_name}
+                WHERE bar_time_ts >= ?
+                  AND bar_time_ts < ?
+                  AND ask_open IS NOT NULL
+                  AND bid_open IS NOT NULL
+                  AND ask_close IS NOT NULL
+                  AND bid_close IS NOT NULL
+                ORDER BY bar_time_ts
+            """
+            return price_conn.execute(sql, (from_bar_time_ts, to_bar_time_ts_exclusive)).fetchall()
+        finally:
+            price_conn.close()
+
+    def _append_complete_bar_without_gap_checks(self, bar_row):
+        # Добавляем уже проверенный полный бар без повторной gap-валидации.
+        self.current_hour.add_bar(
+            ask_open=bar_row["ask_open"],
+            bid_open=bar_row["bid_open"],
+            ask_close=bar_row["ask_close"],
+            bid_close=bar_row["bid_close"],
+        )
+        self.current_hour_last_bar_time_ts = bar_row["bar_time_ts"]
+        self.current_hour_expected_next_bar_time_ts = (
+            bar_row["bar_time_ts"] + PEARSON_BAR_INTERVAL_SECONDS
+        )
+
+    def _try_hydrate_current_hour_from_db(self, target_bar_time_ts):
+        # Пытаемся догрузить в runtime уже существующие в БД бары текущего часа
+        # до target_bar_time_ts (не включая его).
+        if self.current_hour is None:
+            return
+        if self.current_hour_expected_next_bar_time_ts is None:
+            return
+        if target_bar_time_ts <= self.current_hour_expected_next_bar_time_ts:
+            return
+
+        db_rows = self._load_existing_current_hour_bars_from_db(
+            from_bar_time_ts=self.current_hour_expected_next_bar_time_ts,
+            to_bar_time_ts_exclusive=target_bar_time_ts,
+        )
+        for row in db_rows:
+            row_bar_time_ts = row["bar_time_ts"]
+            if row_bar_time_ts < self.current_hour_expected_next_bar_time_ts:
+                continue
+            if row_bar_time_ts > self.current_hour_expected_next_bar_time_ts:
+                # В БД всё ещё есть реальная дырка.
+                break
+            self._append_complete_bar_without_gap_checks(row)
+
     def _rank_similarity_candidates(self, ranked_candidates):
         # На вход берём уже готовый shortlist после первого Пирсона.
         #
@@ -335,11 +404,22 @@ class PearsonLiveRuntime:
             )
 
         if bar_time_ts > self.current_hour_expected_next_bar_time_ts:
-            self._mark_current_hour_invalid(
-                f"Обнаружена дырка в текущем часе: "
-                f"ожидался bar_time_ts={self.current_hour_expected_next_bar_time_ts}, "
-                f"получен bar_time_ts={bar_time_ts}"
-            )
+            self._try_hydrate_current_hour_from_db(target_bar_time_ts=bar_time_ts)
+
+            if bar_time_ts > self.current_hour_expected_next_bar_time_ts:
+                # Особый случай старта/рестарта внутри уже идущего часа:
+                # если runtime ещё не успел накопить ни одного бара текущего часа,
+                # не признаём час невалидным немедленно. Даём разовой докачке
+                # последнего часа время заполнить БД, а runtime подхватит эти бары
+                # на следующем realtime-обновлении через _try_hydrate_current_hour_from_db().
+                if self.current_hour.current_n() == 0:
+                    return
+
+                self._mark_current_hour_invalid(
+                    f"Обнаружена дырка в текущем часе: "
+                    f"ожидался bar_time_ts={self.current_hour_expected_next_bar_time_ts}, "
+                    f"получен bar_time_ts={bar_time_ts}"
+                )
 
         ask_open = bar["ask_open"]
         bid_open = bar["bid_open"]
