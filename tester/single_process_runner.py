@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 from zoneinfo import ZoneInfo
 
-from config import settings_live
+from config import settings_live, BASE_DIR
 from contracts import Instrument
 from core.db_initializer import build_table_name
 from core.logger import get_logger, log_info, setup_logging
@@ -22,16 +22,19 @@ from ts.strategy_params import DEFAULT_STRATEGY_PARAMS, StrategyParams
 # как и в боевом роботе.
 # ============================================================
 
-START_UTC = "2026-03-30 08:00:00"
-END_UTC = "2026-03-30 18:00:00"
+START_UTC = "2026-03-30 18:00:00"
+END_UTC = "2026-03-31 19:00:00"
 
 
-def _date_part(value: str) -> str:
-    return value.strip().split(" ")[0]
+def _sanitize_name_part(value: str) -> str:
+    return value.strip().replace(" ", "_").replace(":", "-")
 
 
-RUN_NAME = f"single_run_{_date_part(START_UTC)}__to__{_date_part(END_UTC)}"
-OUTPUT_DIR = str(Path("tester") / "runs" / RUN_NAME)
+RUN_NAME = f"single_run_{_sanitize_name_part(START_UTC)}__to__{_sanitize_name_part(END_UTC)}"
+
+# Всегда кладём результаты в <project>/tester/runs/<RUN_NAME>,
+# независимо от того, откуда именно запущен файл.
+OUTPUT_DIR = str(BASE_DIR / "tester" / "runs" / RUN_NAME)
 
 PRICE_DB_PATH = settings_live.price_db_path
 PREPARED_DB_PATH = settings_live.prepared_db_path
@@ -42,10 +45,6 @@ COMMISSION_PER_SIDE_USD = 0.62
 
 # Выход на следующем баре после того, как current_bar_index >= EXIT_BAR_INDEX.
 EXIT_BAR_INDEX = settings_live.trading_exit_bar_index
-
-# Можно оставить None, тогда возьмутся значения из StrategyParams.
-MIN_CORRELATION_OVERRIDE = None
-TOP_N_OVERRIDE = None
 
 SAVE_RESULT_FILES = True
 PRINT_SUMMARY_TO_CONSOLE = False
@@ -66,8 +65,9 @@ LOG_EACH_NEW_CT_HOUR = True
 # }
 #
 # STRATEGY_PARAM_OVERRIDES = {
+#     "pearson_shortlist_min_correlation": 0.78,
+#     "pearson_shortlist_top_n": 20,
 #     "forecast_top_n_after_similarity": 7,
-#     "decision_min_best_similarity_score": 0.45,
 # }
 # ============================================================
 
@@ -359,8 +359,6 @@ def run_single_process_backtest(
         strategy_params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
         execution_params: Optional[BacktestExecutionParams] = None,
         settings=None,
-        min_correlation: Optional[float] = None,
-        top_n: Optional[int] = None,
 ) -> BacktestResult:
     if settings is None:
         settings = settings_live
@@ -420,8 +418,6 @@ def run_single_process_backtest(
     runtime = PearsonLiveRuntime(
         settings=settings,
         instrument_code=execution_params.instrument_code,
-        min_correlation=min_correlation,
-        top_n=top_n,
         strategy_params=strategy_params,
     )
     runtime.mark_startup_backfill_completed()
@@ -718,6 +714,7 @@ def run_single_process_backtest(
 
     summary = {
         "run_name": RUN_NAME,
+        "output_dir": str(Path(OUTPUT_DIR).resolve()),
         "instrument_code": execution_params.instrument_code,
         "start_utc": start_utc_sql,
         "end_utc_exclusive": end_utc_exclusive_sql,
@@ -742,8 +739,7 @@ def run_single_process_backtest(
         "bars_per_second": (bar_count / elapsed_total) if elapsed_total > 0 else 0.0,
         "execution_params": asdict(execution_params),
         "strategy_params": asdict(strategy_params),
-        "min_correlation_override": min_correlation,
-        "top_n_override": top_n,
+        "strategy_param_overrides": dict(STRATEGY_PARAM_OVERRIDES),
         "price_db_path": settings.price_db_path,
         "prepared_db_path": settings.prepared_db_path,
         "table_name": table_name,
@@ -859,8 +855,6 @@ def main() -> None:
         strategy_params=RUN_STRATEGY_PARAMS,
         execution_params=execution_params,
         settings=settings,
-        min_correlation=MIN_CORRELATION_OVERRIDE,
-        top_n=TOP_N_OVERRIDE,
     )
 
     if SAVE_RESULT_FILES:
