@@ -4,6 +4,7 @@ from typing import Optional
 
 from contracts import Instrument
 from core.db_initializer import build_table_name
+from core.logger import get_logger, log_warning
 from ts.candidate_decision import evaluate_decision_layer
 from ts.candidate_forecast import build_group_forecast_from_prepared_candidates
 from ts.pearson_runtime import PearsonCurrentHour
@@ -18,6 +19,8 @@ from ts.ts_config import (
     pearson_eval_end_bar_count_exclusive,
 )
 from ts.ts_time import resolve_allowed_hour_slots
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -102,6 +105,7 @@ class PearsonLiveRuntime:
         self.current_hour_expected_next_bar_time_ts = None
 
         self.allowed_hour_slots = []
+        self.startup_backfill_completed = False
         self.last_snapshot = self._build_empty_snapshot()
 
     def on_closed_bar(self, bar):
@@ -275,7 +279,7 @@ class PearsonLiveRuntime:
         )
         self.current_hour_last_bar_time_ts = bar_row["bar_time_ts"]
         self.current_hour_expected_next_bar_time_ts = (
-            bar_row["bar_time_ts"] + PEARSON_BAR_INTERVAL_SECONDS
+                bar_row["bar_time_ts"] + PEARSON_BAR_INTERVAL_SECONDS
         )
 
     def _try_hydrate_current_hour_from_db(self, target_bar_time_ts):
@@ -300,6 +304,11 @@ class PearsonLiveRuntime:
                 # В БД всё ещё есть реальная дырка.
                 break
             self._append_complete_bar_without_gap_checks(row)
+
+    def mark_startup_backfill_completed(self, sync_ts=None):
+        # Фиксируем, что стартовая разовая докачка последнего часа завершилась.
+        # После этого gap-check внутри текущего часа снова работает в обычном режиме.
+        self.startup_backfill_completed = True
 
     def _rank_similarity_candidates(self, ranked_candidates):
         # На вход берём уже готовый shortlist после первого Пирсона.
@@ -409,12 +418,11 @@ class PearsonLiveRuntime:
             self._try_hydrate_current_hour_from_db(target_bar_time_ts=bar_time_ts)
 
             if bar_time_ts > self.current_hour_expected_next_bar_time_ts:
-                # Особый случай старта/рестарта внутри уже идущего часа:
-                # если runtime ещё не успел накопить ни одного бара текущего часа,
-                # не признаём час невалидным немедленно. Даём разовой докачке
-                # последнего часа время заполнить БД, а runtime подхватит эти бары
-                # на следующем realtime-обновлении через _try_hydrate_current_hour_from_db().
-                if self.current_hour.current_n() == 0:
+                # Пока не завершилась стартовая разовая докачка последнего часа,
+                # не признаём текущий час невалидным. Это нормальный сценарий
+                # рестарта в середине часа: realtime уже пошёл, а backfill ещё
+                # не успел заполнить начало текущего часа в БД.
+                if not self.startup_backfill_completed:
                     return
 
                 self._mark_current_hour_invalid(
@@ -469,6 +477,29 @@ class PearsonLiveRuntime:
         if self.current_hour_valid:
             self.current_hour_valid = False
             self.current_hour_invalid_reason = reason
+
+            hour_start_ct = None
+            hour_slot_ct = None
+            current_bar_count = 0
+
+            if self.current_hour is not None:
+                hour_start_ct = self.current_hour.hour_start_ct
+                hour_slot_ct = self.current_hour.hour_slot_ct
+                current_bar_count = self.current_hour.current_n()
+
+            log_warning(
+                logger,
+                (
+                    "PEARSON LIVE INVALID HOUR | "
+                    f"instrument={self.instrument_code} | "
+                    f"hour_start_ct={hour_start_ct} | "
+                    f"hour_slot_ct={hour_slot_ct} | "
+                    f"current_bar_count={current_bar_count} | "
+                    f"expected_next_bar_time_ts={self.current_hour_expected_next_bar_time_ts} | "
+                    f"reason={reason}"
+                ),
+                to_telegram=True,
+            )
 
     def _is_search_window_active(self):
         # Проверяем, входит ли текущий уже накопленный префикс

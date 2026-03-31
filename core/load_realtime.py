@@ -391,6 +391,7 @@ def maybe_start_recent_backfill_task(
         recent_backfill_state,
         what_to_show,
         bar_time_ts,
+        pearson_live_runtime=None,
 ):
     # Обновляем состояние первого BID / ASK бара и,
     # когда получен первый синхронный BID/ASK bar_time_ts,
@@ -430,6 +431,9 @@ def maybe_start_recent_backfill_task(
 
             if was_loaded:
                 recent_backfill_state["last_backfill_completed_sync_ts"] = sync_ts
+
+            if pearson_live_runtime is not None:
+                pearson_live_runtime.mark_startup_backfill_completed(sync_ts=sync_ts)
 
         except asyncio.CancelledError:
             raise
@@ -751,6 +755,7 @@ def build_realtime_update_handler(
                 recent_backfill_state=recent_backfill_state,
                 what_to_show=what_to_show,
                 bar_time_ts=bar_time_ts,
+                pearson_live_runtime=pearson_live_runtime,
             )
 
             maybe_feed_pearson_live(
