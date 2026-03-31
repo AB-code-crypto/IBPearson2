@@ -4,20 +4,23 @@ from typing import Optional
 
 from contracts import Instrument
 from core.db_initializer import build_table_name
+from core.logger import get_logger, log_warning
 from ts.candidate_decision import evaluate_decision_layer
 from ts.candidate_forecast import build_group_forecast_from_prepared_candidates
-from ts.pearson_runtime import PearsonCurrentHour
 from ts.candidate_scoring import rank_prepared_candidates_by_similarity
+from ts.pearson_runtime import PearsonCurrentHour
 from ts.prepared_reader import load_prepared_hours_by_slots
 from ts.ts_config import (
     FORECAST_TOP_N_AFTER_SIMILARITY,
     PEARSON_BAR_INTERVAL_SECONDS,
     PEARSON_SHORTLIST_MIN_CORRELATION,
     PEARSON_SHORTLIST_TOP_N,
-    pearson_eval_start_bar_count,
     pearson_eval_end_bar_count_exclusive,
+    pearson_eval_start_bar_count,
 )
 from ts.ts_time import resolve_allowed_hour_slots
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -43,6 +46,7 @@ class PearsonLiveSnapshot:
     allowed_hour_slots: list[int]
     history_candidate_count: int
     candidates_initialized: bool
+
     correlation_calculated: bool
     similarity_calculated: bool
     forecast_calculated: bool
@@ -69,6 +73,7 @@ class PearsonLiveRuntime:
     #   полностью сбрасываем состояние и начинаем новый час;
     # - historical candidates загружаем сразу в начале часа;
     # - расчёт корреляции включаем только в разрешённом окне.
+
     def __init__(
             self,
             settings,
@@ -80,6 +85,7 @@ class PearsonLiveRuntime:
 
         self.settings = settings
         self.instrument_code = instrument_code
+
         self.table_name = build_table_name(
             instrument_code=instrument_code,
             bar_size_setting=instrument_row["barSizeSetting"],
@@ -87,7 +93,6 @@ class PearsonLiveRuntime:
 
         if min_correlation is None:
             min_correlation = PEARSON_SHORTLIST_MIN_CORRELATION
-
         if top_n is None:
             top_n = PEARSON_SHORTLIST_TOP_N
 
@@ -96,12 +101,15 @@ class PearsonLiveRuntime:
 
         self.current_hour = None
         self.current_hour_prepared_hours_map = {}
+
         self.current_hour_valid = True
         self.current_hour_invalid_reason = None
+
         self.current_hour_last_bar_time_ts = None
         self.current_hour_expected_next_bar_time_ts = None
 
         self.allowed_hour_slots = []
+
         self.last_snapshot = self._build_empty_snapshot()
 
     def on_closed_bar(self, bar):
@@ -114,6 +122,7 @@ class PearsonLiveRuntime:
         # - bid_open
         # - ask_close
         # - bid_close
+
         bar_time_ts = bar["bar_time_ts"]
         bar_time_ts_ct = bar["bar_time_ts_ct"]
 
@@ -122,7 +131,6 @@ class PearsonLiveRuntime:
 
         if self.current_hour is None:
             self._start_new_hour(bar_hour_start_ts, bar_hour_start_ts_ct)
-
         elif bar_hour_start_ts_ct < self.current_hour.hour_start_ts_ct:
             raise ValueError(
                 f"Получен бар из прошлого часа: "
@@ -130,7 +138,6 @@ class PearsonLiveRuntime:
                 f"bar_time_ts_ct={bar_time_ts_ct}, "
                 f"current_hour_start_ts_ct={self.current_hour.hour_start_ts_ct}"
             )
-
         elif bar_hour_start_ts_ct > self.current_hour.hour_start_ts_ct:
             self._start_new_hour(bar_hour_start_ts, bar_hour_start_ts_ct)
 
@@ -140,6 +147,7 @@ class PearsonLiveRuntime:
         similarity_calculated = False
         forecast_calculated = False
         decision_calculated = False
+
         ranked_candidates = []
         ranked_similarity_candidates = []
         forecast_summary = None
@@ -183,7 +191,6 @@ class PearsonLiveRuntime:
             forecast_summary=forecast_summary,
             decision_result=decision_result,
         )
-
         return self.last_snapshot
 
     def get_last_snapshot(self):
@@ -193,8 +200,10 @@ class PearsonLiveRuntime:
     def _start_new_hour(self, hour_start_ts, hour_start_ts_ct):
         # Полностью переключаем runtime на новый час.
         self.current_hour = PearsonCurrentHour(hour_start_ts, hour_start_ts_ct)
+
         self.current_hour_valid = True
         self.current_hour_invalid_reason = None
+
         self.current_hour_last_bar_time_ts = None
         self.current_hour_expected_next_bar_time_ts = hour_start_ts
 
@@ -214,8 +223,8 @@ class PearsonLiveRuntime:
         # Берём только:
         # - разрешённые hour_slot;
         # - часы строго раньше текущего часа.
-        prepared_conn = sqlite3.connect(self.settings.prepared_db_path)
 
+        prepared_conn = sqlite3.connect(self.settings.prepared_db_path)
         try:
             prepared_conn.row_factory = sqlite3.Row
             prepared_conn.execute("PRAGMA busy_timeout=5000;")
@@ -226,9 +235,7 @@ class PearsonLiveRuntime:
                 hour_slots_ct=self.allowed_hour_slots,
                 before_hour_start_ts_ct=self.current_hour.hour_start_ts_ct,
             )
-
             return prepared_hours
-
         finally:
             prepared_conn.close()
 
@@ -245,15 +252,12 @@ class PearsonLiveRuntime:
             return []
 
         shortlist_prepared_hours = []
-
         for item in ranked_candidates:
             hour_start_ts = item["hour_start_ts"]
-
             if hour_start_ts not in self.current_hour_prepared_hours_map:
                 raise ValueError(
                     f"Не найден prepared-кандидат для hour_start_ts={hour_start_ts}"
                 )
-
             shortlist_prepared_hours.append(
                 self.current_hour_prepared_hours_map[hour_start_ts]
             )
@@ -263,7 +267,6 @@ class PearsonLiveRuntime:
             prepared_hours=shortlist_prepared_hours,
             min_required_pearson=None,
         )
-
         return ranked_similarity_candidates
 
     def _build_forecast_summary(self, ranked_similarity_candidates):
@@ -280,21 +283,17 @@ class PearsonLiveRuntime:
         ]
 
         selected_prepared_hours = []
-
         for item in selected_similarity_candidates:
             hour_start_ts = item["hour_start_ts"]
-
             if hour_start_ts not in self.current_hour_prepared_hours_map:
                 raise ValueError(
                     f"Не найден prepared-кандидат для hour_start_ts={hour_start_ts}"
                 )
-
             selected_prepared_hours.append(
                 self.current_hour_prepared_hours_map[hour_start_ts]
             )
 
         current_bar_index = self.current_hour.current_bar_index()
-
         if current_bar_index is None:
             return None
 
@@ -302,7 +301,6 @@ class PearsonLiveRuntime:
             prepared_hours=selected_prepared_hours,
             current_bar_index=current_bar_index,
         )
-
         return forecast_summary
 
     def _build_decision_result(self, ranked_similarity_candidates, forecast_summary):
@@ -350,13 +348,10 @@ class PearsonLiveRuntime:
 
         if ask_open is None:
             self._mark_current_hour_invalid("ask_open is NULL в текущем часу")
-
         if bid_open is None:
             self._mark_current_hour_invalid("bid_open is NULL в текущем часу")
-
         if ask_close is None:
             self._mark_current_hour_invalid("ask_close is NULL в текущем часу")
-
         if bid_close is None:
             self._mark_current_hour_invalid("bid_close is NULL в текущем часу")
 
@@ -390,6 +385,29 @@ class PearsonLiveRuntime:
             self.current_hour_valid = False
             self.current_hour_invalid_reason = reason
 
+            hour_start_ct = None
+            hour_slot_ct = None
+            current_bar_count = 0
+
+            if self.current_hour is not None:
+                hour_start_ct = self.current_hour.hour_start_ct
+                hour_slot_ct = self.current_hour.hour_slot_ct
+                current_bar_count = self.current_hour.current_n()
+
+            log_warning(
+                logger,
+                (
+                    "PEARSON LIVE INVALID HOUR | "
+                    f"instrument={self.instrument_code} | "
+                    f"hour_start_ct={hour_start_ct} | "
+                    f"hour_slot_ct={hour_slot_ct} | "
+                    f"current_bar_count={current_bar_count} | "
+                    f"expected_next_bar_time_ts={self.current_hour_expected_next_bar_time_ts} | "
+                    f"reason={reason}"
+                ),
+                to_telegram=True,
+            )
+
     def _is_search_window_active(self):
         # Проверяем, входит ли текущий уже накопленный префикс
         # в разрешённое окно поиска.
@@ -397,7 +415,6 @@ class PearsonLiveRuntime:
             return False
 
         current_bar_count = self.current_hour.current_n()
-
         return (
                 current_bar_count >= pearson_eval_start_bar_count()
                 and current_bar_count < pearson_eval_end_bar_count_exclusive()
