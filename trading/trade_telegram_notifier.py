@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 
 from core.telegram_sender import TelegramSender
 
-
 CHICAGO_TZ = ZoneInfo("America/Chicago")
 
 
@@ -36,15 +35,15 @@ class TradeTelegramNotifier:
         await self.sender.close()
 
     async def send_entry_message(
-        self,
-        *,
-        snapshot,
-        pearson_live_runtime,
-        trade_id,
-        local_symbol,
-        side,
-        quantity,
-        placement,
+            self,
+            *,
+            snapshot,
+            pearson_live_runtime,
+            trade_id,
+            local_symbol,
+            side,
+            quantity,
+            placement,
     ):
         # 1) Подробный common-канал: как и раньше.
         common_text = self._build_entry_text(
@@ -125,14 +124,14 @@ class TradeTelegramNotifier:
                 )
 
     async def send_exit_message(
-        self,
-        *,
-        snapshot,
-        trade_id,
-        entry_side,
-        exit_side,
-        quantity,
-        placement,
+            self,
+            *,
+            snapshot,
+            trade_id,
+            entry_side,
+            exit_side,
+            quantity,
+            placement,
     ):
         # 1) Подробный common-канал: как и раньше.
         common_text = self._build_exit_text(
@@ -180,22 +179,22 @@ class TradeTelegramNotifier:
             )
 
     def _build_entry_text(
-        self,
-        *,
-        snapshot,
-        trade_id,
-        local_symbol,
-        side,
-        quantity,
-        placement,
+            self,
+            *,
+            snapshot,
+            trade_id,
+            local_symbol,
+            side,
+            quantity,
+            placement,
     ):
         best_similarity_score = None
         best_candidate_lines = []
         if snapshot.ranked_similarity_candidates:
             best_similarity_score = snapshot.ranked_similarity_candidates[0]["final_score"]
             for index, item in enumerate(
-                snapshot.ranked_similarity_candidates[: self.max_text_candidates],
-                start=1,
+                    snapshot.ranked_similarity_candidates[: self.max_text_candidates],
+                    start=1,
             ):
                 best_candidate_lines.append(
                     f"{index}) {item['hour_start_ct']} CT | "
@@ -219,32 +218,37 @@ class TradeTelegramNotifier:
         best_similarity_text = "-"
         if best_similarity_score is not None:
             best_similarity_text = f"{best_similarity_score:.4f}"
+        entry_time = self._format_utc_ts(
+            int(placement.done.checked_at_utc.timestamp()) if placement.done is not None
+            else int(placement.receipt.placed_at_utc.timestamp())
+        )
 
         return (
             f"ОТКРЫТА СДЕЛКА\n"
-            f"trade_id: {trade_id}\n"
+            f"Сделка №: {trade_id}\n"
             f"Инструмент: {local_symbol}\n"
             f"Сторона: {side}\n"
             f"Количество: {quantity}\n"
+            f"Время UTC: {entry_time}\n"
             f"Час CT: {snapshot.hour_start_ct}\n"
             f"bar_index: {snapshot.current_bar_index}\n"
             f"Цена входа: {placement.avg_fill_price}\n"
             f"Комиссия входа: {placement.total_commission}\n"
-            f"Направление: {snapshot.decision_result['decision'] if snapshot.decision_result else '-'}\n"
+            # f"Направление: {snapshot.decision_result['decision'] if snapshot.decision_result else '-'}\n"
             f"Лучший similarity-score: {best_similarity_text}\n"
-            f"Forecast: {forecast_text}\n"
+            f"Прогноз: {forecast_text}\n"
             f"Лучшие кандидаты:\n{candidates_block}"
         )
 
     def _build_exit_text(
-        self,
-        *,
-        snapshot,
-        trade_id,
-        entry_side,
-        exit_side,
-        quantity,
-        placement,
+            self,
+            *,
+            snapshot,
+            trade_id,
+            entry_side,
+            exit_side,
+            quantity,
+            placement,
     ):
         return (
             f"ЗАКРЫТА СДЕЛКА\n"

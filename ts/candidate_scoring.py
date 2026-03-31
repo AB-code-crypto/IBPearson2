@@ -188,7 +188,7 @@ def evaluate_similarity_between_prefixes(
             (pearson_score, params.similarity_weight_pearson),
             (range_score, params.similarity_weight_range),
             (net_move_score, params.similarity_weight_net_move),
-            (range_position_score, params.similarity_weight_range_POSITION),
+            (range_position_score, params.similarity_weight_range_position),
             (mean_abs_diff_score, params.similarity_weight_mean_abs_diff),
             (efficiency_score, params.similarity_weight_efficiency),
             (diff_pearson_score, params.similarity_weight_diff_pearson),
