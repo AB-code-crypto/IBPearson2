@@ -10,15 +10,7 @@ from ts.candidate_forecast import build_group_forecast_from_prepared_candidates
 from ts.pearson_runtime import PearsonCurrentHour
 from ts.candidate_scoring import rank_prepared_candidates_by_similarity
 from ts.prepared_reader import load_prepared_hours_by_slots
-from ts.ts_config import (
-    FORECAST_TOP_N_AFTER_SIMILARITY,
-    PEARSON_BAR_INTERVAL_SECONDS,
-    PEARSON_SHORTLIST_MIN_CORRELATION,
-    PEARSON_SHORTLIST_TOP_N,
-    pearson_eval_start_bar_count,
-    pearson_eval_end_bar_count_exclusive,
-)
-from ts.ts_time import resolve_allowed_hour_slots
+from ts.strategy_params import DEFAULT_STRATEGY_PARAMS, StrategyParams
 
 logger = get_logger(__name__)
 
@@ -78,21 +70,23 @@ class PearsonLiveRuntime:
             instrument_code="MNQ",
             min_correlation=None,
             top_n=None,
+            strategy_params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
     ):
         instrument_row = Instrument[instrument_code]
 
         self.settings = settings
         self.instrument_code = instrument_code
+        self.strategy_params = strategy_params
         self.table_name = build_table_name(
             instrument_code=instrument_code,
             bar_size_setting=instrument_row["barSizeSetting"],
         )
 
         if min_correlation is None:
-            min_correlation = PEARSON_SHORTLIST_MIN_CORRELATION
+            min_correlation = self.strategy_params.pearson_shortlist_min_correlation
 
         if top_n is None:
-            top_n = PEARSON_SHORTLIST_TOP_N
+            top_n = self.strategy_params.pearson_shortlist_top_n
 
         self.min_correlation = min_correlation
         self.top_n = top_n
@@ -202,7 +196,7 @@ class PearsonLiveRuntime:
         self.current_hour_last_bar_time_ts = None
         self.current_hour_expected_next_bar_time_ts = hour_start_ts
 
-        self.allowed_hour_slots = resolve_allowed_hour_slots(
+        self.allowed_hour_slots = self.strategy_params.resolve_allowed_hour_slots(
             self.current_hour.hour_slot_ct
         )
 
@@ -279,7 +273,7 @@ class PearsonLiveRuntime:
         )
         self.current_hour_last_bar_time_ts = bar_row["bar_time_ts"]
         self.current_hour_expected_next_bar_time_ts = (
-                bar_row["bar_time_ts"] + PEARSON_BAR_INTERVAL_SECONDS
+                bar_row["bar_time_ts"] + self.strategy_params.pearson_bar_interval_seconds
         )
 
     def _try_hydrate_current_hour_from_db(self, target_bar_time_ts):
@@ -340,6 +334,7 @@ class PearsonLiveRuntime:
             current_values=self.current_hour.x,
             prepared_hours=shortlist_prepared_hours,
             min_required_pearson=None,
+            params=self.strategy_params,
         )
 
         return ranked_similarity_candidates
@@ -354,7 +349,7 @@ class PearsonLiveRuntime:
             return None
 
         selected_similarity_candidates = ranked_similarity_candidates[
-            :FORECAST_TOP_N_AFTER_SIMILARITY
+            : self.strategy_params.forecast_top_n_after_similarity
         ]
 
         selected_prepared_hours = []
@@ -388,6 +383,7 @@ class PearsonLiveRuntime:
         return evaluate_decision_layer(
             ranked_similarity_candidates=ranked_similarity_candidates,
             forecast_summary=forecast_summary,
+            params=self.strategy_params,
         )
 
     def _append_bar_to_current_hour(self, bar):
@@ -466,7 +462,7 @@ class PearsonLiveRuntime:
 
         self.current_hour_last_bar_time_ts = bar_time_ts
         self.current_hour_expected_next_bar_time_ts = (
-                bar_time_ts + PEARSON_BAR_INTERVAL_SECONDS
+                bar_time_ts + self.strategy_params.pearson_bar_interval_seconds
         )
 
     def _mark_current_hour_invalid(self, reason):
@@ -510,8 +506,8 @@ class PearsonLiveRuntime:
         current_bar_count = self.current_hour.current_n()
 
         return (
-                current_bar_count >= pearson_eval_start_bar_count()
-                and current_bar_count < pearson_eval_end_bar_count_exclusive()
+                current_bar_count >= self.strategy_params.pearson_eval_start_bar_count()
+                and current_bar_count < self.strategy_params.pearson_eval_end_bar_count_exclusive()
         )
 
     def _build_empty_snapshot(self):
@@ -526,8 +522,8 @@ class PearsonLiveRuntime:
             current_bar_index=None,
             expected_next_bar_time_ts=None,
             search_window_active=False,
-            search_window_start_bar_count=pearson_eval_start_bar_count(),
-            search_window_end_bar_count_exclusive=pearson_eval_end_bar_count_exclusive(),
+            search_window_start_bar_count=self.strategy_params.pearson_eval_start_bar_count(),
+            search_window_end_bar_count_exclusive=self.strategy_params.pearson_eval_end_bar_count_exclusive(),
             current_hour_valid=True,
             current_hour_invalid_reason=None,
             allowed_hour_slots=[],
@@ -568,8 +564,8 @@ class PearsonLiveRuntime:
             current_bar_index=self.current_hour.current_bar_index(),
             expected_next_bar_time_ts=self.current_hour_expected_next_bar_time_ts,
             search_window_active=self._is_search_window_active(),
-            search_window_start_bar_count=pearson_eval_start_bar_count(),
-            search_window_end_bar_count_exclusive=pearson_eval_end_bar_count_exclusive(),
+            search_window_start_bar_count=self.strategy_params.pearson_eval_start_bar_count(),
+            search_window_end_bar_count_exclusive=self.strategy_params.pearson_eval_end_bar_count_exclusive(),
             current_hour_valid=self.current_hour_valid,
             current_hour_invalid_reason=self.current_hour_invalid_reason,
             allowed_hour_slots=list(self.allowed_hour_slots),

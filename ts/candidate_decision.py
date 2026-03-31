@@ -1,15 +1,4 @@
-from ts.ts_config import (
-    DECISION_MAX_MEAN_ADVERSE_MOVE_ABS,
-    DECISION_MIN_BEST_SIMILARITY_SCORE,
-    DECISION_MIN_DIRECTIONAL_RATIO,
-    DECISION_MIN_FORECAST_CANDIDATES,
-    DECISION_MIN_LAST_SIMILARITY_SCORE,
-    DECISION_MIN_MEAN_FINAL_MOVE_ABS,
-    DECISION_MIN_MEDIAN_FINAL_MOVE_ABS,
-    DECISION_MIN_SIMILARITY_CANDIDATES,
-    DECISION_REQUIRE_MEAN_AND_MEDIAN_SAME_DIRECTION,
-    DECISION_USE_ADVERSE_MOVE_FILTER,
-)
+from ts.strategy_params import DEFAULT_STRATEGY_PARAMS, StrategyParams
 
 
 def get_move_direction(value):
@@ -77,7 +66,11 @@ def build_decision_diagnostics(ranked_similarity_candidates, forecast_summary):
     }
 
 
-def evaluate_decision_layer(ranked_similarity_candidates, forecast_summary):
+def evaluate_decision_layer(
+    ranked_similarity_candidates,
+    forecast_summary,
+    params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
+):
     # Первый простой decision layer.
     #
     # На входе:
@@ -95,11 +88,11 @@ def evaluate_decision_layer(ranked_similarity_candidates, forecast_summary):
         forecast_summary=forecast_summary,
     )
 
-    if len(ranked_similarity_candidates) < DECISION_MIN_SIMILARITY_CANDIDATES:
+    if len(ranked_similarity_candidates) < params.decision_min_similarity_candidates:
         return build_no_trade_result(
             reason=(
                 f"Недостаточно кандидатов после similarity: "
-                f"{len(ranked_similarity_candidates)} < {DECISION_MIN_SIMILARITY_CANDIDATES}"
+                f"{len(ranked_similarity_candidates)} < {params.decision_min_similarity_candidates}"
             ),
             diagnostics=diagnostics,
         )
@@ -110,11 +103,11 @@ def evaluate_decision_layer(ranked_similarity_candidates, forecast_summary):
             diagnostics=diagnostics,
         )
 
-    if forecast_summary["candidate_count"] < DECISION_MIN_FORECAST_CANDIDATES:
+    if forecast_summary["candidate_count"] < params.decision_min_forecast_candidates:
         return build_no_trade_result(
             reason=(
                 f"Недостаточно кандидатов в прогнозном слое: "
-                f"{forecast_summary['candidate_count']} < {DECISION_MIN_FORECAST_CANDIDATES}"
+                f"{forecast_summary['candidate_count']} < {params.decision_min_forecast_candidates}"
             ),
             diagnostics=diagnostics,
         )
@@ -126,11 +119,11 @@ def evaluate_decision_layer(ranked_similarity_candidates, forecast_summary):
             diagnostics=diagnostics,
         )
 
-    if best_similarity_score < DECISION_MIN_BEST_SIMILARITY_SCORE:
+    if best_similarity_score < params.decision_min_best_similarity_score:
         return build_no_trade_result(
             reason=(
                 f"Лучший similarity-score слишком мал: "
-                f"{best_similarity_score:.4f} < {DECISION_MIN_BEST_SIMILARITY_SCORE:.4f}"
+                f"{best_similarity_score:.4f} < {params.decision_min_best_similarity_score:.4f}"
             ),
             diagnostics=diagnostics,
         )
@@ -142,11 +135,11 @@ def evaluate_decision_layer(ranked_similarity_candidates, forecast_summary):
             diagnostics=diagnostics,
         )
 
-    if last_similarity_score < DECISION_MIN_LAST_SIMILARITY_SCORE:
+    if last_similarity_score < params.decision_min_last_similarity_score:
         return build_no_trade_result(
             reason=(
                 f"Последний similarity-score в top-N слишком мал: "
-                f"{last_similarity_score:.4f} < {DECISION_MIN_LAST_SIMILARITY_SCORE:.4f}"
+                f"{last_similarity_score:.4f} < {params.decision_min_last_similarity_score:.4f}"
             ),
             diagnostics=diagnostics,
         )
@@ -154,7 +147,7 @@ def evaluate_decision_layer(ranked_similarity_candidates, forecast_summary):
     mean_direction = diagnostics["mean_direction"]
     median_direction = diagnostics["median_direction"]
 
-    if DECISION_REQUIRE_MEAN_AND_MEDIAN_SAME_DIRECTION:
+    if params.decision_require_mean_and_median_same_direction:
         if mean_direction != median_direction:
             return build_no_trade_result(
                 reason=(
@@ -173,41 +166,41 @@ def evaluate_decision_layer(ranked_similarity_candidates, forecast_summary):
     mean_final_move_abs = abs(diagnostics["mean_final_move"])
     median_final_move_abs = abs(diagnostics["median_final_move"])
 
-    if mean_final_move_abs < DECISION_MIN_MEAN_FINAL_MOVE_ABS:
+    if mean_final_move_abs < params.decision_min_mean_final_move_abs:
         return build_no_trade_result(
             reason=(
                 f"Среднее ожидаемое движение слишком мало: "
-                f"{mean_final_move_abs:.6f} < {DECISION_MIN_MEAN_FINAL_MOVE_ABS:.6f}"
+                f"{mean_final_move_abs:.6f} < {params.decision_min_mean_final_move_abs:.6f}"
             ),
             diagnostics=diagnostics,
         )
 
-    if median_final_move_abs < DECISION_MIN_MEDIAN_FINAL_MOVE_ABS:
+    if median_final_move_abs < params.decision_min_median_final_move_abs:
         return build_no_trade_result(
             reason=(
                 f"Медианное ожидаемое движение слишком мало: "
-                f"{median_final_move_abs:.6f} < {DECISION_MIN_MEDIAN_FINAL_MOVE_ABS:.6f}"
+                f"{median_final_move_abs:.6f} < {params.decision_min_median_final_move_abs:.6f}"
             ),
             diagnostics=diagnostics,
         )
 
     if mean_direction == "UP":
-        if diagnostics["positive_ratio"] < DECISION_MIN_DIRECTIONAL_RATIO:
+        if diagnostics["positive_ratio"] < params.decision_min_directional_ratio:
             return build_no_trade_result(
                 reason=(
                     f"Недостаточная доля кандидатов вверх: "
-                    f"{diagnostics['positive_ratio']:.4f} < {DECISION_MIN_DIRECTIONAL_RATIO:.4f}"
+                    f"{diagnostics['positive_ratio']:.4f} < {params.decision_min_directional_ratio:.4f}"
                 ),
                 diagnostics=diagnostics,
             )
 
-        if DECISION_USE_ADVERSE_MOVE_FILTER:
-            if abs(diagnostics["mean_max_drawdown"]) > DECISION_MAX_MEAN_ADVERSE_MOVE_ABS:
+        if params.decision_use_adverse_move_filter:
+            if abs(diagnostics["mean_max_drawdown"]) > params.decision_max_mean_adverse_move_abs:
                 return build_no_trade_result(
                     reason=(
                         f"Слишком большой средний adverse move для LONG: "
                         f"{abs(diagnostics['mean_max_drawdown']):.6f} > "
-                        f"{DECISION_MAX_MEAN_ADVERSE_MOVE_ABS:.6f}"
+                        f"{params.decision_max_mean_adverse_move_abs:.6f}"
                     ),
                     diagnostics=diagnostics,
                 )
@@ -219,22 +212,22 @@ def evaluate_decision_layer(ranked_similarity_candidates, forecast_summary):
         )
 
     if mean_direction == "DOWN":
-        if diagnostics["negative_ratio"] < DECISION_MIN_DIRECTIONAL_RATIO:
+        if diagnostics["negative_ratio"] < params.decision_min_directional_ratio:
             return build_no_trade_result(
                 reason=(
                     f"Недостаточная доля кандидатов вниз: "
-                    f"{diagnostics['negative_ratio']:.4f} < {DECISION_MIN_DIRECTIONAL_RATIO:.4f}"
+                    f"{diagnostics['negative_ratio']:.4f} < {params.decision_min_directional_ratio:.4f}"
                 ),
                 diagnostics=diagnostics,
             )
 
-        if DECISION_USE_ADVERSE_MOVE_FILTER:
-            if diagnostics["mean_max_upside"] > DECISION_MAX_MEAN_ADVERSE_MOVE_ABS:
+        if params.decision_use_adverse_move_filter:
+            if diagnostics["mean_max_upside"] > params.decision_max_mean_adverse_move_abs:
                 return build_no_trade_result(
                     reason=(
                         f"Слишком большой средний adverse move для SHORT: "
                         f"{diagnostics['mean_max_upside']:.6f} > "
-                        f"{DECISION_MAX_MEAN_ADVERSE_MOVE_ABS:.6f}"
+                        f"{params.decision_max_mean_adverse_move_abs:.6f}"
                     ),
                     diagnostics=diagnostics,
                 )

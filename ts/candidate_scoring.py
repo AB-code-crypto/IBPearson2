@@ -9,27 +9,7 @@ from ts.candidate_features import (
     calc_range,
     calc_range_position,
 )
-from ts.ts_config import (
-    SIMILARITY_DIFF_PEARSON_SCORE_ONE_AT,
-    SIMILARITY_DIFF_PEARSON_SCORE_ZERO_AT,
-    SIMILARITY_DIFF_SIGN_MATCH_SCORE_ONE_AT,
-    SIMILARITY_DIFF_SIGN_MATCH_SCORE_ZERO_AT,
-    SIMILARITY_EFFICIENCY_DISTANCE_ZERO_AT,
-    SIMILARITY_MEAN_ABS_DIFF_DISTANCE_ZERO_AT,
-    SIMILARITY_NET_MOVE_DISTANCE_ZERO_AT,
-    SIMILARITY_PEARSON_SCORE_ONE_AT,
-    SIMILARITY_PEARSON_SCORE_ZERO_AT,
-    SIMILARITY_RANGE_DISTANCE_ZERO_AT,
-    SIMILARITY_RANGE_POSITION_DISTANCE_ZERO_AT,
-    SIMILARITY_WEIGHT_DIFF_PEARSON,
-    SIMILARITY_WEIGHT_DIFF_SIGN_MATCH,
-    SIMILARITY_WEIGHT_EFFICIENCY,
-    SIMILARITY_WEIGHT_MEAN_ABS_DIFF,
-    SIMILARITY_WEIGHT_NET_MOVE,
-    SIMILARITY_WEIGHT_PEARSON,
-    SIMILARITY_WEIGHT_RANGE,
-    SIMILARITY_WEIGHT_RANGE_POSITION,
-)
+from ts.strategy_params import DEFAULT_STRATEGY_PARAMS, StrategyParams
 
 
 def calc_relative_distance(value_a, value_b, eps=1e-12):
@@ -120,7 +100,11 @@ def build_similarity_features(values):
     }
 
 
-def evaluate_similarity_between_prefixes(current_values, candidate_values):
+def evaluate_similarity_between_prefixes(
+    current_values,
+    candidate_values,
+    params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
+):
     # Сравниваем два префикса и считаем все расстояния, score и итоговый результат.
     if len(current_values) != len(candidate_values):
         raise ValueError(
@@ -163,52 +147,52 @@ def evaluate_similarity_between_prefixes(current_values, candidate_values):
 
     pearson_score = calc_score_from_value(
         value=pearson,
-        score_zero_at=SIMILARITY_PEARSON_SCORE_ZERO_AT,
-        score_one_at=SIMILARITY_PEARSON_SCORE_ONE_AT,
+        score_zero_at=params.similarity_pearson_score_zero_at,
+        score_one_at=params.similarity_pearson_score_one_at,
     )
     diff_pearson_score = 0.0
     if diff_pearson is not None:
         diff_pearson_score = calc_score_from_value(
             value=diff_pearson,
-            score_zero_at=SIMILARITY_DIFF_PEARSON_SCORE_ZERO_AT,
-            score_one_at=SIMILARITY_DIFF_PEARSON_SCORE_ONE_AT,
+            score_zero_at=params.similarity_diff_pearson_score_zero_at,
+            score_one_at=params.similarity_diff_pearson_score_one_at,
         )
     diff_sign_match_score = calc_score_from_value(
         value=diff_sign_match_ratio,
-        score_zero_at=SIMILARITY_DIFF_SIGN_MATCH_SCORE_ZERO_AT,
-        score_one_at=SIMILARITY_DIFF_SIGN_MATCH_SCORE_ONE_AT,
+        score_zero_at=params.similarity_diff_sign_match_score_zero_at,
+        score_one_at=params.similarity_diff_sign_match_score_one_at,
     )
     range_score = calc_score_from_distance(
         distance=range_distance,
-        distance_zero_at=SIMILARITY_RANGE_DISTANCE_ZERO_AT,
+        distance_zero_at=params.similarity_range_distance_zero_at,
     )
     net_move_score = calc_score_from_distance(
         distance=net_move_distance,
-        distance_zero_at=SIMILARITY_NET_MOVE_DISTANCE_ZERO_AT,
+        distance_zero_at=params.similarity_net_move_distance_zero_at,
     )
     range_position_score = calc_score_from_distance(
         distance=range_position_distance,
-        distance_zero_at=SIMILARITY_RANGE_POSITION_DISTANCE_ZERO_AT,
+        distance_zero_at=params.similarity_range_position_distance_zero_at,
     )
     mean_abs_diff_score = calc_score_from_distance(
         distance=mean_abs_diff_distance,
-        distance_zero_at=SIMILARITY_MEAN_ABS_DIFF_DISTANCE_ZERO_AT,
+        distance_zero_at=params.similarity_mean_abs_diff_distance_zero_at,
     )
     efficiency_score = calc_score_from_distance(
         distance=efficiency_distance,
-        distance_zero_at=SIMILARITY_EFFICIENCY_DISTANCE_ZERO_AT,
+        distance_zero_at=params.similarity_efficiency_distance_zero_at,
     )
 
     final_score = calc_weighted_average_score(
         [
-            (pearson_score, SIMILARITY_WEIGHT_PEARSON),
-            (range_score, SIMILARITY_WEIGHT_RANGE),
-            (net_move_score, SIMILARITY_WEIGHT_NET_MOVE),
-            (range_position_score, SIMILARITY_WEIGHT_RANGE_POSITION),
-            (mean_abs_diff_score, SIMILARITY_WEIGHT_MEAN_ABS_DIFF),
-            (efficiency_score, SIMILARITY_WEIGHT_EFFICIENCY),
-            (diff_pearson_score, SIMILARITY_WEIGHT_DIFF_PEARSON),
-            (diff_sign_match_score, SIMILARITY_WEIGHT_DIFF_SIGN_MATCH),
+            (pearson_score, params.similarity_weight_pearson),
+            (range_score, params.similarity_weight_range),
+            (net_move_score, params.similarity_weight_net_move),
+            (range_position_score, params.similarity_weight_range_POSITION),
+            (mean_abs_diff_score, params.similarity_weight_mean_abs_diff),
+            (efficiency_score, params.similarity_weight_efficiency),
+            (diff_pearson_score, params.similarity_weight_diff_pearson),
+            (diff_sign_match_score, params.similarity_weight_diff_sign_match),
         ]
     )
 
@@ -243,12 +227,17 @@ def evaluate_similarity_between_prefixes(current_values, candidate_values):
     }
 
 
-def evaluate_prepared_candidate_similarity(current_values, prepared_hour_payload):
+def evaluate_prepared_candidate_similarity(
+    current_values,
+    prepared_hour_payload,
+    params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
+):
     # Считаем score похожести для одного prepared-кандидата.
     candidate_values = prepared_hour_payload["y"][: len(current_values)]
     result = evaluate_similarity_between_prefixes(
         current_values=current_values,
         candidate_values=candidate_values,
+        params=params,
     )
 
     if result is None:
@@ -267,7 +256,12 @@ def evaluate_prepared_candidate_similarity(current_values, prepared_hour_payload
     return result
 
 
-def rank_prepared_candidates_by_similarity(current_values, prepared_hours, min_required_pearson=None):
+def rank_prepared_candidates_by_similarity(
+    current_values,
+    prepared_hours,
+    min_required_pearson=None,
+    params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
+):
     # Считаем score похожести для списка prepared-кандидатов и сортируем их.
     ranked = []
 
@@ -275,6 +269,7 @@ def rank_prepared_candidates_by_similarity(current_values, prepared_hours, min_r
         item = evaluate_prepared_candidate_similarity(
             current_values=current_values,
             prepared_hour_payload=prepared_hour_payload,
+            params=params,
         )
 
         if item is None:
