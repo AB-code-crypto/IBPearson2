@@ -514,6 +514,41 @@ def format_decision_result_text(decision_result):
     )
 
 
+def build_relaxed_shortlist_counts(pearson_live_runtime):
+    # Диагностика: сколько исторических часов прошло бы первый порог Пирсона,
+    # если ослабить его на 0.05 и на 0.10 относительно текущего боевого значения.
+    if pearson_live_runtime is None:
+        return None
+
+    current_hour = pearson_live_runtime.current_hour
+    if current_hour is None:
+        return None
+
+    base_threshold = pearson_live_runtime.min_correlation
+    threshold_minus_005 = max(-1.0, base_threshold - 0.05)
+    threshold_minus_010 = max(-1.0, base_threshold - 0.10)
+
+    count_minus_005 = len(
+        current_hour.get_ranked_candidates(
+            min_correlation=threshold_minus_005,
+            top_n=None,
+        )
+    )
+    count_minus_010 = len(
+        current_hour.get_ranked_candidates(
+            min_correlation=threshold_minus_010,
+            top_n=None,
+        )
+    )
+
+    return (
+        threshold_minus_005,
+        count_minus_005,
+        threshold_minus_010,
+        count_minus_010,
+    )
+
+
 def maybe_log_pearson_live_snapshot(pearson_live_runtime):
     # Пишем короткую диагностику live-runtime после каждого расчётного бара.
     if pearson_live_runtime is None:
@@ -559,7 +594,14 @@ def maybe_log_pearson_live_snapshot(pearson_live_runtime):
             decision_text = format_decision_result_text(snapshot.decision_result)
         else:
             decision_text = "нет decision_result"
-
+    relaxed_shortlist_text = "relaxed=не считалось"
+    relaxed_counts = build_relaxed_shortlist_counts(pearson_live_runtime)
+    if relaxed_counts is not None:
+        threshold_minus_005, count_minus_005, threshold_minus_010, count_minus_010 = relaxed_counts
+        relaxed_shortlist_text = (
+            f"corr>={threshold_minus_005:.2f}:{count_minus_005} | "
+            f"corr>={threshold_minus_010:.2f}:{count_minus_010}"
+        )
     log_info(
         logger,
         (
@@ -569,6 +611,7 @@ def maybe_log_pearson_live_snapshot(pearson_live_runtime):
             f"CT_hour={snapshot.hour_start_ct} | "
             f"hist={snapshot.history_candidate_count} | "
             f"shortlist={len(snapshot.ranked_candidates)} | "
+            f"relaxed_shortlist={relaxed_shortlist_text} | "
             f"similarity={len(snapshot.ranked_similarity_candidates)} | "
             f"best_pearson={pearson_leader_text} | "
             f"best_similarity={similarity_leader_text} | "
