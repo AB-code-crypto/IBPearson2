@@ -251,10 +251,8 @@ class TradeTelegramNotifier:
         return (
             f"ЗАКРЫТА СДЕЛКА №  {trade_id}\n"
             f"Инструмент: {self.instrument_code}\n"
-            f"Сторона входа: {entry_side}\n"
-            f"Сторона выхода: {exit_side}\n"
+            f"Сторона: {entry_side}\n"
             f"Количество: {quantity}\n"
-            f"Час CT: {snapshot.hour_start_ct}\n"
             f"Цена выхода: {placement.avg_fill_price}\n"
             f"Комиссия выхода: {placement.total_commission}\n"
             f"Realized PnL: {placement.realized_pnl}"
