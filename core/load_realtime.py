@@ -5,6 +5,8 @@ import traceback
 from datetime import timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
+import time
+from datetime import datetime
 
 from ib_async import Contract
 
@@ -37,7 +39,74 @@ REALTIME_WHAT_TO_SHOW_LIST = ("BID", "ASK")
 # перед самой первой подпиской.
 REALTIME_READY_WAIT_SECONDS = 1
 
+REALTIME_STALL_WARNING_SECONDS = 30
+REALTIME_OK_TELEGRAM_INTERVAL_SECONDS = 600
+REALTIME_RESUBSCRIBE_GRACE_SECONDS = 15
+
 CHICAGO_TZ = ZoneInfo("America/Chicago")
+
+
+def is_expected_realtime_flow_now():
+    # Грубая проверка, должен ли сейчас вообще идти поток 5-секундных баров для CME MNQ.
+    # Используем CT.
+    now_ct = datetime.now(CHICAGO_TZ)
+    weekday = now_ct.weekday()  # Mon=0 ... Sun=6
+    hour = now_ct.hour
+
+    # Суббота полностью закрыта
+    if weekday == 5:
+        return False
+
+    # Воскресенье: открытие с 17:00 CT
+    if weekday == 6:
+        return hour >= 17
+
+    # Пятница: торговля до 16:00 CT
+    if weekday == 4:
+        return hour < 16
+
+    # Пн-Чт: ежедневный клиринг/maintenance 16:00-17:00 CT
+    return hour != 16
+
+
+def build_realtime_monitor_state():
+    return {
+        "last_bar_monotonic": None,
+        "last_bar_time_ts": None,
+        "last_bar_stream": None,
+        "last_ok_telegram_monotonic": None,
+        "last_stall_warning_monotonic": None,
+        "last_restore_monotonic": None,
+        "last_subscription_reset_monotonic": None,
+    }
+
+
+def note_realtime_bar_received(realtime_monitor_state, what_to_show, bar_time_ts):
+    now_mono = time.monotonic()
+    realtime_monitor_state["last_bar_monotonic"] = now_mono
+    realtime_monitor_state["last_bar_time_ts"] = bar_time_ts
+    realtime_monitor_state["last_bar_stream"] = what_to_show
+
+
+def clear_realtime_subscription_rows(ib, current_subscriptions):
+    for subscription_row in current_subscriptions:
+        realtime_bars = subscription_row["realtime_bars"]
+        update_handler = subscription_row["update_handler"]
+
+        if realtime_bars is not None and update_handler is not None:
+            try:
+                realtime_bars.updateEvent -= update_handler
+            except Exception as exc:
+                log_warning(
+                    logger,
+                    f"Не удалось снять обработчик realtime updateEvent "
+                    f"для {subscription_row['what_to_show']}: {exc}",
+                    to_telegram=False,
+                )
+
+        cancel_realtime_bars_safe(ib, realtime_bars)
+
+    current_subscriptions.clear()
 
 
 def build_futures_contract(instrument_code, instrument_row, contract_row):
@@ -749,6 +818,7 @@ def build_realtime_update_handler(
         what_to_show,
         conn,
         table_name,
+        realtime_monitor_state,
 ):
     # Для каждой отдельной подписки делаем свой обработчик,
     # чтобы BID и ASK обрабатывались независимо и без догадок по контексту.
@@ -788,7 +858,11 @@ def build_realtime_update_handler(
             )
 
             bar_time_ts = int(bar.time.astimezone(timezone.utc).timestamp())
-
+            note_realtime_bar_received(
+                realtime_monitor_state=realtime_monitor_state,
+                what_to_show=what_to_show,
+                bar_time_ts=bar_time_ts,
+            )
             maybe_start_recent_backfill_task(
                 ib=ib,
                 ib_health=ib_health,
@@ -867,7 +941,7 @@ async def load_realtime_task(
     decision_order_state = {
         "task": None,
     }
-
+    realtime_monitor_state = build_realtime_monitor_state()
     # Храним все открытые подписки и их обработчики,
     # чтобы в finally корректно всё снять и отменить.
     current_subscriptions = []
@@ -889,54 +963,63 @@ async def load_realtime_task(
 
         await wait_for_realtime_ready(ib, ib_health)
 
-        for what_to_show in REALTIME_WHAT_TO_SHOW_LIST:
-            log_info(
-                logger,
-                f"Realtime loader: открываю подписку на {contract.localSymbol} "
-                f"(conId={contract.conId}), whatToShow={what_to_show}, useRTH={use_rth}",
-                to_telegram=False,
-            )
+        def subscribe_all_realtime_streams():
+            clear_realtime_subscription_rows(ib, current_subscriptions)
 
-            realtime_bars = subscribe_realtime_bars(
-                ib=ib,
-                contract=contract,
-                what_to_show=what_to_show,
-                use_rth=use_rth,
-            )
+            pearson_live_state["pending_bars"].clear()
 
-            update_handler = build_realtime_update_handler(
-                ib=ib,
-                ib_health=ib_health,
-                settings=settings,
-                instrument_code=instrument_code,
-                contract_local_symbol=contract_local_symbol,
-                recent_backfill_state=recent_backfill_state,
-                pearson_live_runtime=pearson_live_runtime,
-                pearson_live_state=pearson_live_state,
-                decision_order_executor=decision_order_executor,
-                decision_order_state=decision_order_state,
-                active_futures=active_futures,
-                contract=contract,
-                what_to_show=what_to_show,
-                conn=db_conn,
-                table_name=table_name,
-            )
-            realtime_bars.updateEvent += update_handler
+            for what_to_show in REALTIME_WHAT_TO_SHOW_LIST:
+                log_info(
+                    logger,
+                    f"Realtime loader: открываю подписку на {contract.localSymbol} "
+                    f"(conId={contract.conId}), whatToShow={what_to_show}, useRTH={use_rth}",
+                    to_telegram=False,
+                )
 
-            current_subscriptions.append(
-                {
-                    "what_to_show": what_to_show,
-                    "realtime_bars": realtime_bars,
-                    "update_handler": update_handler,
-                }
-            )
+                realtime_bars = subscribe_realtime_bars(
+                    ib=ib,
+                    contract=contract,
+                    what_to_show=what_to_show,
+                    use_rth=use_rth,
+                )
 
-            log_info(
-                logger,
-                f"Подписался на real-time 5-second bars: {contract.localSymbol} "
-                f"(conId={contract.conId}), whatToShow={what_to_show}, useRTH={use_rth}",
-                to_telegram=False,
-            )
+                update_handler = build_realtime_update_handler(
+                    ib=ib,
+                    ib_health=ib_health,
+                    settings=settings,
+                    instrument_code=instrument_code,
+                    contract_local_symbol=contract_local_symbol,
+                    recent_backfill_state=recent_backfill_state,
+                    pearson_live_runtime=pearson_live_runtime,
+                    pearson_live_state=pearson_live_state,
+                    decision_order_executor=decision_order_executor,
+                    decision_order_state=decision_order_state,
+                    active_futures=active_futures,
+                    contract=contract,
+                    what_to_show=what_to_show,
+                    conn=db_conn,
+                    table_name=table_name,
+                    realtime_monitor_state=realtime_monitor_state,
+                )
+
+                realtime_bars.updateEvent += update_handler
+
+                current_subscriptions.append(
+                    {
+                        "what_to_show": what_to_show,
+                        "realtime_bars": realtime_bars,
+                        "update_handler": update_handler,
+                    }
+                )
+
+                log_info(
+                    logger,
+                    f"Подписался на real-time 5-second bars: {contract.localSymbol} "
+                    f"(conId={contract.conId}), whatToShow={what_to_show}, useRTH={use_rth}",
+                    to_telegram=False,
+                )
+
+        subscribe_all_realtime_streams()
 
         # Дальше просто держим подписки живыми и ждём новые бары.
         #
@@ -945,12 +1028,80 @@ async def load_realtime_task(
         # первого синхронного BID/ASK бара сервис сможет снова один раз
         # дозагрузить последний час.
         was_realtime_ready = is_realtime_ready_now(ib, ib_health)
+        if was_realtime_ready:
+            realtime_monitor_state["last_restore_monotonic"] = time.monotonic()
 
         while True:
             realtime_ready_now = is_realtime_ready_now(ib, ib_health)
+            now_mono = time.monotonic()
 
             if was_realtime_ready and not realtime_ready_now:
                 reset_recent_backfill_state(recent_backfill_state)
+
+                log_warning(
+                    logger,
+                    f"Realtime loader: поток {instrument_code} временно недоступен. "
+                    f"Сбрасываю состояние recent backfill и жду восстановления подписок.",
+                    to_telegram=True,
+                )
+
+            elif not was_realtime_ready and realtime_ready_now:
+                log_info(
+                    logger,
+                    f"Realtime loader: соединение/market data восстановлены, "
+                    f"переподписываюсь на realtime {instrument_code}",
+                    to_telegram=True,
+                )
+
+                subscribe_all_realtime_streams()
+
+                realtime_monitor_state["last_restore_monotonic"] = now_mono
+                realtime_monitor_state["last_stall_warning_monotonic"] = None
+                realtime_monitor_state["last_ok_telegram_monotonic"] = None
+                realtime_monitor_state["last_subscription_reset_monotonic"] = now_mono
+
+            if realtime_ready_now and is_expected_realtime_flow_now():
+                last_bar_monotonic = realtime_monitor_state["last_bar_monotonic"]
+                last_restore_monotonic = realtime_monitor_state["last_restore_monotonic"]
+
+                bar_is_recent = (
+                        last_bar_monotonic is not None
+                        and (now_mono - last_bar_monotonic) <= REALTIME_STALL_WARNING_SECONDS
+                )
+
+                restore_grace_passed = (
+                        last_restore_monotonic is None
+                        or (now_mono - last_restore_monotonic) >= REALTIME_RESUBSCRIBE_GRACE_SECONDS
+                )
+
+                if restore_grace_passed and not bar_is_recent:
+                    last_warning = realtime_monitor_state["last_stall_warning_monotonic"]
+                    if last_warning is None or (now_mono - last_warning) >= REALTIME_STALL_WARNING_SECONDS:
+                        log_warning(
+                            logger,
+                            f"Realtime loader: после восстановления/в рабочее время нет новых "
+                            f"BID/ASK баров для {instrument_code} уже "
+                            f"{REALTIME_STALL_WARNING_SECONDS}+ секунд. "
+                            f"Пробую переподписаться.",
+                            to_telegram=True,
+                        )
+
+                        subscribe_all_realtime_streams()
+
+                        realtime_monitor_state["last_stall_warning_monotonic"] = now_mono
+                        realtime_monitor_state["last_restore_monotonic"] = now_mono
+                        realtime_monitor_state["last_subscription_reset_monotonic"] = now_mono
+
+                if bar_is_recent:
+                    last_ok = realtime_monitor_state["last_ok_telegram_monotonic"]
+                    if last_ok is None or (now_mono - last_ok) >= REALTIME_OK_TELEGRAM_INTERVAL_SECONDS:
+                        log_info(
+                            logger,
+                            f"Realtime loader: поток {instrument_code} работает штатно, "
+                            f"новые BID/ASK бары продолжают поступать.",
+                            to_telegram=True,
+                        )
+                        realtime_monitor_state["last_ok_telegram_monotonic"] = now_mono
 
             was_realtime_ready = realtime_ready_now
             await asyncio.sleep(1)

@@ -143,7 +143,7 @@ DECISION_MIN_BEST_SIMILARITY_SCORE = 0.5
 
 # Минимальный итоговый similarity-score у последнего кандидата
 # внутри top-N, который реально попадает в forecast и decision.
-DECISION_MIN_LAST_SIMILARITY_SCORE = 0.35
+DECISION_MIN_LAST_SIMILARITY_SCORE = 0.2
 
 # Минимальная доля кандидатов, идущих в одну сторону.
 DECISION_MIN_DIRECTIONAL_RATIO = 0.60
