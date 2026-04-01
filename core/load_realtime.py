@@ -77,7 +77,6 @@ def build_realtime_monitor_state():
         "last_ok_telegram_monotonic": None,
         "last_stall_warning_monotonic": None,
         "last_restore_monotonic": None,
-        "last_subscription_reset_monotonic": None,
     }
 
 
@@ -917,7 +916,8 @@ async def load_realtime_task(
     # - пишем новые бары в SQLite в таблицу вида MNQ_5s;
     # - BID и ASK пишем независимо по мере их прихода;
     # - для pearson_live собираем полноценный бар только когда пришли обе стороны;
-    # - никакой переподписки и логики ролловера здесь нет.
+    # - при reconnect умеем переподписываться на realtime BID/ASK;
+    # - при зависании потока умеем предупредить и попробовать переподписаться.
     instrument_code, contract_local_symbol = get_realtime_active_future(active_futures)
 
     instrument_row = get_realtime_instrument_row(instrument_code)
@@ -1058,7 +1058,6 @@ async def load_realtime_task(
                 realtime_monitor_state["last_restore_monotonic"] = now_mono
                 realtime_monitor_state["last_stall_warning_monotonic"] = None
                 realtime_monitor_state["last_ok_telegram_monotonic"] = None
-                realtime_monitor_state["last_subscription_reset_monotonic"] = now_mono
 
             if realtime_ready_now and is_expected_realtime_flow_now():
                 last_bar_monotonic = realtime_monitor_state["last_bar_monotonic"]
@@ -1090,7 +1089,6 @@ async def load_realtime_task(
 
                         realtime_monitor_state["last_stall_warning_monotonic"] = now_mono
                         realtime_monitor_state["last_restore_monotonic"] = now_mono
-                        realtime_monitor_state["last_subscription_reset_monotonic"] = now_mono
 
                 if bar_is_recent:
                     last_ok = realtime_monitor_state["last_ok_telegram_monotonic"]
@@ -1107,22 +1105,7 @@ async def load_realtime_task(
             await asyncio.sleep(1)
 
     finally:
-        for subscription_row in current_subscriptions:
-            realtime_bars = subscription_row["realtime_bars"]
-            update_handler = subscription_row["update_handler"]
-
-            if realtime_bars is not None and update_handler is not None:
-                try:
-                    realtime_bars.updateEvent -= update_handler
-                except Exception as exc:
-                    log_warning(
-                        logger,
-                        f"Не удалось снять обработчик realtime updateEvent "
-                        f"для {subscription_row['what_to_show']}: {exc}",
-                        to_telegram=False,
-                    )
-
-            cancel_realtime_bars_safe(ib, realtime_bars)
+        clear_realtime_subscription_rows(ib, current_subscriptions)
 
         if db_conn is not None:
             try:

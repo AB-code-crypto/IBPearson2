@@ -224,8 +224,7 @@ class TradeTelegramNotifier:
         )
 
         return (
-            f"ОТКРЫТА СДЕЛКА\n"
-            f"Сделка №: {trade_id}\n"
+            f"ОТКРЫТА СДЕЛКА  №: {trade_id}\n"
             f"Инструмент: {local_symbol}\n"
             f"Сторона: {side}\n"
             f"Количество: {quantity}\n"
@@ -234,7 +233,6 @@ class TradeTelegramNotifier:
             f"bar_index: {snapshot.current_bar_index}\n"
             f"Цена входа: {placement.avg_fill_price}\n"
             f"Комиссия входа: {placement.total_commission}\n"
-            # f"Направление: {snapshot.decision_result['decision'] if snapshot.decision_result else '-'}\n"
             f"Лучший similarity-score: {best_similarity_text}\n"
             f"Прогноз: {forecast_text}\n"
             f"Лучшие кандидаты:\n{candidates_block}"
@@ -251,8 +249,7 @@ class TradeTelegramNotifier:
             placement,
     ):
         return (
-            f"ЗАКРЫТА СДЕЛКА\n"
-            f"trade_id: {trade_id}\n"
+            f"ЗАКРЫТА СДЕЛКА №  {trade_id}\n"
             f"Инструмент: {self.instrument_code}\n"
             f"Сторона входа: {entry_side}\n"
             f"Сторона выхода: {exit_side}\n"
@@ -266,8 +263,7 @@ class TradeTelegramNotifier:
     def _build_trading_entry_text(self, *, trade_id, side, local_symbol, placement):
         entry_time_ct = self._format_ct_from_placement(placement)
         return (
-            f"ОТКРЫТА СДЕЛКА\n"
-            f"trade_id: {trade_id}\n"
+            f"ОТКРЫТА СДЕЛКА № {trade_id}\n"
             f"Инструмент: {local_symbol}\n"
             f"Направление: {side}\n"
             f"Время CT: {entry_time_ct}\n"
@@ -278,8 +274,7 @@ class TradeTelegramNotifier:
         exit_time_ct = self._format_ct_from_placement(placement)
         entry_price = self._safe_trade_value(trade_row, "entry_avg_fill_price")
         return (
-            f"ЗАКРЫТА СДЕЛКА\n"
-            f"trade_id: {trade_id}\n"
+            f"ЗАКРЫТА СДЕЛКА № {trade_id}\n"
             f"Направление: {entry_side}\n"
             f"Время CT: {exit_time_ct}\n"
             f"Цена входа: {entry_price}\n"
@@ -290,8 +285,7 @@ class TradeTelegramNotifier:
     def _build_promo_entry_text(self, *, trade_id, side, local_symbol, quantity, placement):
         entry_time_ct = self._format_ct_from_placement(placement)
         return (
-            f"Открыта сделка\n"
-            f"Сделка №{trade_id}\n"
+            f"Открыта сделка №{trade_id}\n"
             f"Инструмент: {local_symbol}\n"
             f"Направление: {side}\n"
             f"Время CT: {entry_time_ct}\n"
@@ -305,8 +299,7 @@ class TradeTelegramNotifier:
         total_commissions = self._safe_trade_value(trade_row, "commissions_total")
         realized_pnl = self._safe_trade_value(trade_row, "realized_pnl", fallback=placement.realized_pnl)
         return (
-            f"Закрыта сделка\n"
-            f"Сделка №{trade_id}\n"
+            f"Закрыта сделка №{trade_id}\n"
             f"Направление: {entry_side}\n"
             f"Время CT: {exit_time_ct}\n"
             f"Объём: {quantity}\n"
