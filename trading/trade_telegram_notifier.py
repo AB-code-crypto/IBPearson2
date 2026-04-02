@@ -427,7 +427,7 @@ class TradeTelegramNotifier:
             x=entry_x,
             linestyle="--",
             linewidth=1.5,
-            label=f"Вход | bar_index={entry_x}",
+            label=f"Вход",
         )
 
         if snapshot.forecast_summary is not None:
@@ -462,7 +462,6 @@ class TradeTelegramNotifier:
         if snapshot.decision_result is not None:
             decision = snapshot.decision_result.get("decision", "-")
         plt.title(f"Сделка | {decision} | CT {snapshot.hour_start_ct} | №{trade_id}")
-        plt.xlabel("bar_index")
         plt.ylabel("y")
         plt.legend(loc="best", fontsize=9)
         plt.grid(True)

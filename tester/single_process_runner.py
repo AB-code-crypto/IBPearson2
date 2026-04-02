@@ -22,8 +22,8 @@ from ts.strategy_params import DEFAULT_STRATEGY_PARAMS, StrategyParams
 # как и в боевом роботе.
 # ============================================================
 
-START_UTC = "2026-03-30 18:00:00"
-END_UTC = "2026-03-31 19:00:00"
+START_UTC = "2026-01-01 00:00:00"
+END_UTC = "2026-03-31 00:00:00"
 
 
 def _sanitize_name_part(value: str) -> str:
@@ -72,7 +72,7 @@ LOG_EACH_NEW_CT_HOUR = True
 # ============================================================
 
 STRATEGY_PARAM_OVERRIDES = {
-    "decision_min_last_similarity_score": 0.0,
+    "decision_min_last_similarity_score": 0.3,
 }
 
 
