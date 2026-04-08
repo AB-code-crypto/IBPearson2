@@ -1,6 +1,5 @@
 from core.db_sql import (
     select_prepared_rows_by_slots_sql,
-    select_prepared_hour_rows_sql,
 )
 
 
