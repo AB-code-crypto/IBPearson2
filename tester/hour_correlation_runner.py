@@ -239,7 +239,7 @@ if __name__ == "__main__":
     current_hour_start_ts = utc_datetime_to_ts(current_hour_start_utc)
 
     # Параметры Pearson-shortlist для тестера
-    min_correlation = 0.80
+    min_correlation = 0.8
     top_n = 30
 
     output_base_name = (
@@ -248,8 +248,8 @@ if __name__ == "__main__":
         f"top_{top_n}"
     )
 
-    output_json_path = f"output/{output_base_name}.json"
-    output_csv_path = f"output/{output_base_name}.csv"
+    output_json_path = f"output/json/{output_base_name}.json"
+    output_csv_path = f"output/csv/{output_base_name}.csv"
 
     instrument_row = Instrument[instrument_code]
     table_name = build_table_name(
