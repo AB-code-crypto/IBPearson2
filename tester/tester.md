@@ -52,6 +52,23 @@
         - best / last similarity score
         - directional ratio
         - mean / median final move
+7. `single_run_tester.py`
+    - это первый основной tester-run;
+    - запускаем один прогон на одном наборе `StrategyParams`;
+    - на вход даём:
+        - `instrument_code`
+        - `start_utc`
+        - `end_utc`
+        - один объект `strategy_params_for_run`
+    - внутри файл проходит по всем часам диапазона и на каждом часу считает:
+        1) Pearson shortlist
+        2) similarity
+        3) forecast
+        4) decision
+    - сохраняет:
+        - подробный результат в `output/json`
+        - почасовой summary в `output/csv`
+    - это уже не диагностический runner, а первый основной каркас тестера
 
 ## Смысл
 
