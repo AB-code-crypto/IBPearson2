@@ -333,8 +333,8 @@ if __name__ == "__main__":
         f"top_{pearson_top_n}"
     )
 
-    output_json_path = f"tester/output/{output_base_name}.json"
-    output_csv_path = f"tester/output/{output_base_name}_summary.csv"
+    output_json_path = f"output/json/{output_base_name}.json"
+    output_csv_path = f"output/csv/{output_base_name}.csv"
 
     instrument_row = Instrument[instrument_code]
     table_name = build_table_name(
