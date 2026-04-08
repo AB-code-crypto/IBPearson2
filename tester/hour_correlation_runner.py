@@ -224,6 +224,48 @@ if __name__ == "__main__":
             result=result,
             output_json_path=output_json_path,
         )
+        search_window = result["search_window"]
+        search_bar_count = (
+                search_window["end_bar_count_exclusive"] - search_window["start_bar_count"]
+        )
+
+        print(f"saved json: {output_json_path}")
+        print(f"min_correlation = {min_correlation}")
+        print(f"top_n = {top_n}")
+        print(f"history_candidate_count = {result['history_candidate_count']}")
+        print(f"snapshot_count = {result['snapshot_count']}")
+        print(
+            f"search window: "
+            f"{search_window['start_bar_count']}.."
+            f"{search_window['end_bar_count_exclusive'] - 1} "
+            f"({search_bar_count} bars)"
+        )
+
+        print()
+        print("correlation summary:")
+        print(
+            "bar_index | bar_count | time_ct             | "
+            "ranked_count | max_correlation"
+        )
+        print("-" * 90)
+
+        for snapshot in result["snapshots"]:
+            ranked_candidates = snapshot["ranked_candidates"]
+            ranked_count = len(ranked_candidates)
+
+            if ranked_candidates:
+                max_correlation = ranked_candidates[0]["correlation"]
+                max_correlation_str = f"{max_correlation:.6f}"
+            else:
+                max_correlation_str = "None"
+
+            print(
+                f"{snapshot['current_bar_index']:>9} | "
+                f"{snapshot['current_bar_count']:>9} | "
+                f"{snapshot['last_bar_time_ct']} | "
+                f"{ranked_count:>12} | "
+                f"{max_correlation_str}"
+            )
 
         print(f"saved json: {output_json_path}")
         print(f"min_correlation = {min_correlation}")
