@@ -1,5 +1,6 @@
 import csv
 import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -69,7 +70,9 @@ def pick_prepared_hours_for_pearson_shortlist(
     return result
 
 
-def build_compact_similarity_candidates(ranked_similarity_candidates: list[dict]) -> list[dict]:
+def build_compact_similarity_candidates(
+        ranked_similarity_candidates: list[dict],
+) -> list[dict]:
     """
     Оставляем в JSON все ключевые данные по similarity-кандидатам,
     но без лишнего мусора.
@@ -107,17 +110,37 @@ def build_compact_similarity_candidates(ranked_similarity_candidates: list[dict]
     return result
 
 
-def build_similarity_summary(similarity_snapshots: list[dict]) -> list[dict]:
+def build_similarity_summary(
+        similarity_snapshots: list[dict],
+        strategy_params,
+) -> list[dict]:
     """
     Короткая выжимка по каждому шагу окна similarity.
     """
     result = []
 
+    forecast_top_n = strategy_params.forecast_top_n_after_similarity
+    decision_min_last_similarity_score = (
+        strategy_params.decision_min_last_similarity_score
+    )
+
     for snapshot in similarity_snapshots:
         pearson_ranked_candidates = snapshot["pearson_ranked_candidates"]
         similarity_ranked_candidates = snapshot["similarity_ranked_candidates"]
 
-        best_similarity_item = similarity_ranked_candidates[0] if similarity_ranked_candidates else None
+        best_similarity_item = (
+            similarity_ranked_candidates[0] if similarity_ranked_candidates else None
+        )
+
+        last_forecast_candidate_item = None
+        if len(similarity_ranked_candidates) >= forecast_top_n:
+            last_forecast_candidate_item = similarity_ranked_candidates[forecast_top_n - 1]
+
+        last_forecast_candidate_final_score = (
+            last_forecast_candidate_item["final_score"]
+            if last_forecast_candidate_item
+            else None
+        )
 
         result.append(
             {
@@ -129,14 +152,28 @@ def build_similarity_summary(similarity_snapshots: list[dict]) -> list[dict]:
                 "last_bar_time_ct": snapshot["last_bar_time_ct"],
                 "pearson_ranked_count": len(pearson_ranked_candidates),
                 "similarity_ranked_count": len(similarity_ranked_candidates),
+                "forecast_top_n_after_similarity": forecast_top_n,
+                "decision_min_last_similarity_score": decision_min_last_similarity_score,
                 "best_similarity_hour_start_ct": (
-                    best_similarity_item["hour_start_ct"] if best_similarity_item else None
+                    best_similarity_item["hour_start_ct"]
+                    if best_similarity_item
+                    else None
                 ),
                 "best_similarity_pearson": (
-                    best_similarity_item["pearson"] if best_similarity_item else None
+                    best_similarity_item["pearson"]
+                    if best_similarity_item
+                    else None
                 ),
                 "best_similarity_final_score": (
-                    best_similarity_item["final_score"] if best_similarity_item else None
+                    best_similarity_item["final_score"]
+                    if best_similarity_item
+                    else None
+                ),
+                "last_forecast_candidate_final_score": last_forecast_candidate_final_score,
+                "passes_last_similarity_score_filter": (
+                        last_forecast_candidate_final_score is not None
+                        and last_forecast_candidate_final_score
+                        >= decision_min_last_similarity_score
                 ),
             }
         )
@@ -160,9 +197,13 @@ def save_similarity_summary_to_csv(
         "last_bar_time_ct",
         "pearson_ranked_count",
         "similarity_ranked_count",
+        "forecast_top_n_after_similarity",
+        "decision_min_last_similarity_score",
         "best_similarity_hour_start_ct",
         "best_similarity_pearson",
         "best_similarity_final_score",
+        "last_forecast_candidate_final_score",
+        "passes_last_similarity_score_filter",
     ]
 
     with output_path.open("w", encoding="utf-8-sig", newline="") as f:
@@ -327,6 +368,14 @@ if __name__ == "__main__":
     pearson_min_correlation = 0.70
     pearson_top_n = 50
 
+    # Параметры similarity для конкретного прогона
+    strategy_params_for_run = replace(
+        DEFAULT_STRATEGY_PARAMS,
+        similarity_weight_range_position=1.0,
+        similarity_weight_diff_pearson=1.0,
+        similarity_weight_diff_sign_match=1.0,
+    )
+
     output_base_name = (
         f"hour_similarity_result_"
         f"corr_{str(pearson_min_correlation).replace('.', '_')}_"
@@ -373,6 +422,7 @@ if __name__ == "__main__":
             current_hour_start_ts=current_hour_start_ts,
             pearson_min_correlation=pearson_min_correlation,
             pearson_top_n=pearson_top_n,
+            strategy_params=strategy_params_for_run,
         )
 
         result["input"] = {
@@ -382,9 +432,28 @@ if __name__ == "__main__":
             "current_hour_start_ts_ct": current_hour_start_ts_ct,
             "pearson_min_correlation": pearson_min_correlation,
             "pearson_top_n": pearson_top_n,
+            "forecast_top_n_after_similarity": (
+                strategy_params_for_run.forecast_top_n_after_similarity
+            ),
+            "decision_min_last_similarity_score": (
+                strategy_params_for_run.decision_min_last_similarity_score
+            ),
+            "similarity_weights": {
+                "pearson": strategy_params_for_run.similarity_weight_pearson,
+                "range": strategy_params_for_run.similarity_weight_range,
+                "net_move": strategy_params_for_run.similarity_weight_net_move,
+                "range_position": strategy_params_for_run.similarity_weight_range_position,
+                "mean_abs_diff": strategy_params_for_run.similarity_weight_mean_abs_diff,
+                "efficiency": strategy_params_for_run.similarity_weight_efficiency,
+                "diff_pearson": strategy_params_for_run.similarity_weight_diff_pearson,
+                "diff_sign_match": strategy_params_for_run.similarity_weight_diff_sign_match,
+            },
         }
 
-        similarity_summary = build_similarity_summary(result["snapshots"])
+        similarity_summary = build_similarity_summary(
+            result["snapshots"],
+            strategy_params=strategy_params_for_run,
+        )
 
         save_result_to_json(
             result=result,
@@ -409,6 +478,17 @@ if __name__ == "__main__":
         print(f"current_hour_start_ts_ct = {current_hour_start_ts_ct}")
         print(f"pearson_min_correlation = {pearson_min_correlation}")
         print(f"pearson_top_n = {pearson_top_n}")
+        print(
+            "forecast_top_n_after_similarity = "
+            f"{result['input']['forecast_top_n_after_similarity']}"
+        )
+        print(
+            "decision_min_last_similarity_score = "
+            f"{result['input']['decision_min_last_similarity_score']}"
+        )
+        print("similarity_weights =")
+        for key, value in result["input"]["similarity_weights"].items():
+            print(f"  {key}: {value}")
         print(f"history_candidate_count = {result['history_candidate_count']}")
         print(f"snapshot_count = {result['snapshot_count']}")
         print(
@@ -422,20 +502,26 @@ if __name__ == "__main__":
         print("similarity summary:")
         print(
             "bar_index | bar_count | time_ct             | "
-            "pearson_count | similarity_count | best_final_score | best_pearson"
+            "pearson_count | similarity_count | best_final_score | "
+            "last_forecast_score | min_last_score | pass_last_score"
         )
-        print("-" * 110)
+        print("-" * 145)
 
         for summary_row in similarity_summary:
             best_final_score = summary_row["best_similarity_final_score"]
-            best_pearson = summary_row["best_similarity_pearson"]
+            last_forecast_score = summary_row["last_forecast_candidate_final_score"]
+            min_last_score = summary_row["decision_min_last_similarity_score"]
 
             best_final_score_str = (
                 f"{best_final_score:.6f}" if best_final_score is not None else "None"
             )
-            best_pearson_str = (
-                f"{best_pearson:.6f}" if best_pearson is not None else "None"
+            last_forecast_score_str = (
+                f"{last_forecast_score:.6f}" if last_forecast_score is not None else "None"
             )
+            min_last_score_str = (
+                f"{min_last_score:.6f}" if min_last_score is not None else "None"
+            )
+            pass_last_score_str = str(summary_row["passes_last_similarity_score_filter"])
 
             print(
                 f"{summary_row['current_bar_index']:>9} | "
@@ -444,7 +530,9 @@ if __name__ == "__main__":
                 f"{summary_row['pearson_ranked_count']:>13} | "
                 f"{summary_row['similarity_ranked_count']:>16} | "
                 f"{best_final_score_str:>16} | "
-                f"{best_pearson_str}"
+                f"{last_forecast_score_str:>19} | "
+                f"{min_last_score_str:>14} | "
+                f"{pass_last_score_str}"
             )
 
     finally:
