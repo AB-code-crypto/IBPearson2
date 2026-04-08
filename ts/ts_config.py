@@ -149,7 +149,7 @@ DECISION_MIN_LAST_SIMILARITY_SCORE = 0.2
 DECISION_MIN_DIRECTIONAL_RATIO = 0.60
 
 # Минимальное по модулю ожидаемое движение к концу часа.
-# 0.0005 = 0.05%
+# 0.0005 = 0.05% при стоимости фьюча в 25000 это даёт 12.5 пунктов минимальное движение
 DECISION_MIN_MEAN_FINAL_MOVE_ABS = 0.0005
 DECISION_MIN_MEDIAN_FINAL_MOVE_ABS = 0.0005
 

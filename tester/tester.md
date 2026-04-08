@@ -21,7 +21,21 @@
    Сохраняет:
    - полный результат в `json`
    - краткую выжимку в `csv`
-
+   
+5. `hour_forecast_runner.py`
+   - запускаем после `hour_similarity_runner.py`;
+   - файл прогоняет текущий час через:
+     1) Pearson shortlist
+     2) similarity ranking
+     3) forecast по top-N после similarity
+   - сохраняет:
+     - полный результат в `output/json`
+     - краткую сводку в `output/csv`
+   - показывает в консоли:
+     - сколько кандидатов дошло до forecast
+     - positive / negative ratio
+     - mean / median final move
+     - проходят ли данные текущие decision-пороги forecast-слоя
 ## Смысл
 
 Логика запуска идёт снизу вверх:
