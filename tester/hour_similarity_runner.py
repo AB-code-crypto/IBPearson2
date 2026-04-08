@@ -32,9 +32,6 @@ def utc_datetime_to_ts(dt_str: str) -> int:
 
 
 def build_prepared_hour_map(prepared_candidate_hours: list[dict]) -> dict:
-    """
-    Карта для быстрого доступа к prepared-hour payload по идентификатору часа.
-    """
     result = {}
 
     for item in prepared_candidate_hours:
@@ -45,13 +42,9 @@ def build_prepared_hour_map(prepared_candidate_hours: list[dict]) -> dict:
 
 
 def pick_prepared_hours_for_pearson_shortlist(
-        pearson_ranked_candidates: list[dict],
-        prepared_hour_map: dict,
+    pearson_ranked_candidates: list[dict],
+    prepared_hour_map: dict,
 ) -> list[dict]:
-    """
-    Берём из полного набора prepared-hours только те,
-    которые попали в Pearson-shortlist.
-    """
     result = []
 
     for item in pearson_ranked_candidates:
@@ -71,12 +64,8 @@ def pick_prepared_hours_for_pearson_shortlist(
 
 
 def build_compact_similarity_candidates(
-        ranked_similarity_candidates: list[dict],
+    ranked_similarity_candidates: list[dict],
 ) -> list[dict]:
-    """
-    Оставляем в JSON все ключевые данные по similarity-кандидатам,
-    но без лишнего мусора.
-    """
     result = []
 
     for item in ranked_similarity_candidates:
@@ -111,12 +100,9 @@ def build_compact_similarity_candidates(
 
 
 def build_similarity_summary(
-        similarity_snapshots: list[dict],
-        strategy_params,
+    similarity_snapshots: list[dict],
+    strategy_params,
 ) -> list[dict]:
-    """
-    Короткая выжимка по каждому шагу окна similarity.
-    """
     result = []
 
     forecast_top_n = strategy_params.forecast_top_n_after_similarity
@@ -134,7 +120,9 @@ def build_similarity_summary(
 
         last_forecast_candidate_item = None
         if len(similarity_ranked_candidates) >= forecast_top_n:
-            last_forecast_candidate_item = similarity_ranked_candidates[forecast_top_n - 1]
+            last_forecast_candidate_item = similarity_ranked_candidates[
+                forecast_top_n - 1
+            ]
 
         last_forecast_candidate_final_score = (
             last_forecast_candidate_item["final_score"]
@@ -169,11 +157,13 @@ def build_similarity_summary(
                     if best_similarity_item
                     else None
                 ),
-                "last_forecast_candidate_final_score": last_forecast_candidate_final_score,
+                "last_forecast_candidate_final_score": (
+                    last_forecast_candidate_final_score
+                ),
                 "passes_last_similarity_score_filter": (
-                        last_forecast_candidate_final_score is not None
-                        and last_forecast_candidate_final_score
-                        >= decision_min_last_similarity_score
+                    last_forecast_candidate_final_score is not None
+                    and last_forecast_candidate_final_score
+                    >= decision_min_last_similarity_score
                 ),
             }
         )
@@ -182,8 +172,8 @@ def build_similarity_summary(
 
 
 def save_similarity_summary_to_csv(
-        similarity_summary: list[dict],
-        output_csv_path: str | Path,
+    similarity_summary: list[dict],
+    output_csv_path: str | Path,
 ):
     output_path = Path(output_csv_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -223,23 +213,13 @@ def save_result_to_json(result: dict, output_json_path: str | Path):
 
 
 def run_hour_similarity_loop(
-        current_hour_rows,
-        prepared_candidate_hours,
-        current_hour_start_ts: int,
-        pearson_min_correlation=None,
-        pearson_top_n=None,
-        strategy_params=DEFAULT_STRATEGY_PARAMS,
+    current_hour_rows,
+    prepared_candidate_hours,
+    current_hour_start_ts: int,
+    pearson_min_correlation=None,
+    pearson_top_n=None,
+    strategy_params=DEFAULT_STRATEGY_PARAMS,
 ):
-    """
-    Прогоняет один текущий час через:
-    1) Pearson-shortlist
-    2) similarity-ranking
-
-    На входе только UTC-start часа.
-    CT-start часа вычисляем из первого бара current_hour_rows,
-    чтобы не было рассогласования.
-    """
-
     if not current_hour_rows:
         raise ValueError("current_hour_rows is empty")
 
@@ -358,22 +338,17 @@ if __name__ == "__main__":
     price_db_path = settings_live.price_db_path
     prepared_db_path = settings_live.prepared_db_path
 
-    # Вводим время в удобном UTC-виде
     current_hour_start_utc = "2026-04-08 07:00:00"
-
-    # Внутри проекта дальше используем timestamp
     current_hour_start_ts = utc_datetime_to_ts(current_hour_start_utc)
 
-    # Параметры Pearson-shortlist для тестера
     pearson_min_correlation = 0.70
     pearson_top_n = 50
 
-    # Параметры similarity для конкретного прогона
     strategy_params_for_run = replace(
         DEFAULT_STRATEGY_PARAMS,
-        similarity_weight_range_position=1.0,
-        similarity_weight_diff_pearson=1.0,
-        similarity_weight_diff_sign_match=1.0,
+        similarity_weight_range_position=0.0,
+        similarity_weight_diff_pearson=0.0,
+        similarity_weight_diff_sign_match=0.0,
     )
 
     output_base_name = (
@@ -467,7 +442,7 @@ if __name__ == "__main__":
 
         search_window = result["search_window"]
         search_bar_count = (
-                search_window["end_bar_count_exclusive"] - search_window["start_bar_count"]
+            search_window["end_bar_count_exclusive"] - search_window["start_bar_count"]
         )
 
         print(f"saved json: {output_json_path}")
