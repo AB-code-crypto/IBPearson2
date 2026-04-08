@@ -137,6 +137,10 @@ def run_hour_correlation_loop(
             "hour_start_ct": current_hour.hour_start_ct,
             "hour_slot_ct": current_hour.hour_slot_ct,
         },
+        "pearson_shortlist_params": {
+            "min_correlation": min_correlation,
+            "top_n": top_n,
+        },
         "search_window": {
             "start_bar_count": start_bar_count,
             "end_bar_count_exclusive": end_bar_count_exclusive,
@@ -164,8 +168,18 @@ if __name__ == "__main__":
     # Вводим время только один раз: UTC-start текущего часа
     current_hour_start_ts = 1775635200
 
+    # Параметры Pearson-shortlist для тестера
+    # Можно свободно менять между запусками
+    min_correlation = 0.80
+    top_n = 30
+
     # Куда сохранить JSON
-    output_json_path = "output/hour_correlation_result.json"
+    output_json_path = (
+        f"tester/output/"
+        f"hour_correlation_result_"
+        f"corr_{str(min_correlation).replace('.', '_')}_"
+        f"top_{top_n}.json"
+    )
 
     instrument_row = Instrument[instrument_code]
     table_name = build_table_name(
@@ -202,6 +216,8 @@ if __name__ == "__main__":
             current_hour_rows=current_hour_rows,
             prepared_candidate_hours=prepared_candidate_hours,
             current_hour_start_ts=current_hour_start_ts,
+            min_correlation=min_correlation,
+            top_n=top_n,
         )
 
         save_result_to_json(
@@ -210,6 +226,8 @@ if __name__ == "__main__":
         )
 
         print(f"saved json: {output_json_path}")
+        print(f"min_correlation = {min_correlation}")
+        print(f"top_n = {top_n}")
         print(f"snapshot_count = {result['snapshot_count']}")
         print(f"history_candidate_count = {result['history_candidate_count']}")
 
