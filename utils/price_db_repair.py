@@ -99,7 +99,7 @@ REPAIR_MODE = "AUTO_REPAIR"
 # Предохранитель:
 # True  -> только показать, что будет чиниться
 # False -> реально качать из IB и писать в БД
-DRY_RUN = False
+DRY_RUN = True
 
 INSTRUMENT_CODE = "MNQ"
 
