@@ -1,4 +1,6 @@
+import csv
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from config import settings_live
@@ -19,6 +21,16 @@ from tester.prepared_candidates_loader import (
 
 def floor_to_hour_ts(ts: int) -> int:
     return (ts // 3600) * 3600
+
+
+def utc_datetime_to_ts(dt_str: str) -> int:
+    """
+    Преобразует UTC datetime-строку вида '2026-04-08 08:00:00'
+    в Unix timestamp.
+    """
+    dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+    dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp())
 
 
 def build_compact_ranked_candidates(ranked_candidates: list[dict]) -> list[dict]:
@@ -43,6 +55,61 @@ def build_compact_ranked_candidates(ranked_candidates: list[dict]) -> list[dict]
         )
 
     return result
+
+
+def build_correlation_summary(correlation_snapshots: list[dict]) -> list[dict]:
+    """
+    Строит короткую выжимку по каждому шагу окна поиска.
+    """
+    result = []
+
+    for snapshot in correlation_snapshots:
+        ranked_candidates = snapshot["ranked_candidates"]
+
+        result.append(
+            {
+                "current_bar_index": snapshot["current_bar_index"],
+                "current_bar_count": snapshot["current_bar_count"],
+                "last_bar_time_ts": snapshot["last_bar_time_ts"],
+                "last_bar_time": snapshot["last_bar_time"],
+                "last_bar_time_ts_ct": snapshot["last_bar_time_ts_ct"],
+                "last_bar_time_ct": snapshot["last_bar_time_ct"],
+                "ranked_count": len(ranked_candidates),
+                "max_correlation": (
+                    ranked_candidates[0]["correlation"]
+                    if ranked_candidates
+                    else None
+                ),
+            }
+        )
+
+    return result
+
+
+def save_correlation_summary_to_csv(
+        correlation_summary: list[dict],
+        output_csv_path: str | Path,
+):
+    output_path = Path(output_csv_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = [
+        "current_bar_index",
+        "current_bar_count",
+        "last_bar_time_ts",
+        "last_bar_time",
+        "last_bar_time_ts_ct",
+        "last_bar_time_ct",
+        "ranked_count",
+        "max_correlation",
+    ]
+
+    with output_path.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for row in correlation_summary:
+            writer.writerow(row)
 
 
 def run_hour_correlation_loop(
@@ -165,21 +232,24 @@ if __name__ == "__main__":
     price_db_path = settings_live.price_db_path
     prepared_db_path = settings_live.prepared_db_path
 
-    # Вводим время только один раз: UTC-start текущего часа
-    current_hour_start_ts = 1775635200
+    # Вводим время в удобном UTC-виде
+    current_hour_start_utc = "2026-04-08 07:00:00"
+
+    # Внутри проекта дальше используем timestamp
+    current_hour_start_ts = utc_datetime_to_ts(current_hour_start_utc)
 
     # Параметры Pearson-shortlist для тестера
-    # Можно свободно менять между запусками
     min_correlation = 0.80
     top_n = 30
 
-    # Куда сохранить JSON
-    output_json_path = (
-        f"tester/output/"
+    output_base_name = (
         f"hour_correlation_result_"
         f"corr_{str(min_correlation).replace('.', '_')}_"
-        f"top_{top_n}.json"
+        f"top_{top_n}"
     )
+
+    output_json_path = f"output/{output_base_name}.json"
+    output_csv_path = f"output/{output_base_name}.csv"
 
     instrument_row = Instrument[instrument_code]
     table_name = build_table_name(
@@ -220,16 +290,38 @@ if __name__ == "__main__":
             top_n=top_n,
         )
 
+        result["input"] = {
+            "instrument_code": instrument_code,
+            "current_hour_start_utc": current_hour_start_utc,
+            "current_hour_start_ts": current_hour_start_ts,
+            "current_hour_start_ts_ct": current_hour_start_ts_ct,
+            "min_correlation": min_correlation,
+            "top_n": top_n,
+        }
+
+        correlation_summary = build_correlation_summary(result["snapshots"])
+
         save_result_to_json(
             result=result,
             output_json_path=output_json_path,
         )
+
+        save_correlation_summary_to_csv(
+            correlation_summary=correlation_summary,
+            output_csv_path=output_csv_path,
+        )
+
         search_window = result["search_window"]
         search_bar_count = (
                 search_window["end_bar_count_exclusive"] - search_window["start_bar_count"]
         )
 
         print(f"saved json: {output_json_path}")
+        print(f"saved csv: {output_csv_path}")
+        print(f"instrument_code = {instrument_code}")
+        print(f"current_hour_start_utc = {current_hour_start_utc}")
+        print(f"current_hour_start_ts = {current_hour_start_ts}")
+        print(f"current_hour_start_ts_ct = {current_hour_start_ts_ct}")
         print(f"min_correlation = {min_correlation}")
         print(f"top_n = {top_n}")
         print(f"history_candidate_count = {result['history_candidate_count']}")
@@ -247,41 +339,22 @@ if __name__ == "__main__":
             "bar_index | bar_count | time_ct             | "
             "ranked_count | max_correlation"
         )
-        print("-" * 90)
+        print("-" * 76)
 
-        for snapshot in result["snapshots"]:
-            ranked_candidates = snapshot["ranked_candidates"]
-            ranked_count = len(ranked_candidates)
-
-            if ranked_candidates:
-                max_correlation = ranked_candidates[0]["correlation"]
-                max_correlation_str = f"{max_correlation:.6f}"
-            else:
-                max_correlation_str = "None"
+        for summary_row in correlation_summary:
+            max_correlation = summary_row["max_correlation"]
+            max_correlation_str = (
+                f"{max_correlation:.6f}" if max_correlation is not None else "None"
+            )
 
             print(
-                f"{snapshot['current_bar_index']:>9} | "
-                f"{snapshot['current_bar_count']:>9} | "
-                f"{snapshot['last_bar_time_ct']} | "
-                f"{ranked_count:>12} | "
+                f"{summary_row['current_bar_index']:>9} | "
+                f"{summary_row['current_bar_count']:>9} | "
+                f"{summary_row['last_bar_time_ct']} | "
+                f"{summary_row['ranked_count']:>12} | "
                 f"{max_correlation_str}"
             )
 
-        print(f"saved json: {output_json_path}")
-        print(f"min_correlation = {min_correlation}")
-        print(f"top_n = {top_n}")
-        print(f"snapshot_count = {result['snapshot_count']}")
-        print(f"history_candidate_count = {result['history_candidate_count']}")
-
-        if result["snapshots"]:
-            first_snapshot = result["snapshots"][0]
-            print(f"first_snapshot_last_bar_time_ct = {first_snapshot['last_bar_time_ct']}")
-            print(f"first_snapshot_ranked_count = {len(first_snapshot['ranked_candidates'])}")
-
-            if first_snapshot["ranked_candidates"]:
-                best_item = first_snapshot["ranked_candidates"][0]
-                print(f"best_hour_start_ct = {best_item['hour_start_ct']}")
-                print(f"best_correlation = {best_item['correlation']}")
     finally:
         price_conn.close()
         prepared_conn.close()
