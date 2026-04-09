@@ -29,9 +29,6 @@ class TradeTelegramNotifier:
         self.output_dir = Path(settings.trade_db_path).resolve().parent / "telegram_trade_plots"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Текстовый блок пока оставляем компактным.
-        self.max_text_candidates = 3
-
     async def close(self):
         await self.sender.close()
 
@@ -189,21 +186,8 @@ class TradeTelegramNotifier:
             quantity,
             placement,
     ):
-        best_similarity_score = None
-        best_candidate_lines = []
-        if snapshot.ranked_similarity_candidates:
-            best_similarity_score = snapshot.ranked_similarity_candidates[0]["final_score"]
-            for index, item in enumerate(
-                    snapshot.ranked_similarity_candidates[: self.max_text_candidates],
-                    start=1,
-            ):
-                best_candidate_lines.append(
-                    f"{index}) {item['hour_start_ct']} CT | "
-                    f"score={item['final_score']:.4f} | "
-                    f"corr={item['pearson']:.4f}"
-                )
-
         forecast_text = "нет forecast summary"
+
         if snapshot.forecast_summary is not None:
             direction = self._build_forecast_direction(snapshot.forecast_summary)
             forecast_text = (
@@ -215,17 +199,14 @@ class TradeTelegramNotifier:
                 f"median={snapshot.forecast_summary['median_final_move'] * 100:+.3f}%"
             )
 
-        candidates_block = "\n".join(best_candidate_lines) if best_candidate_lines else "нет"
-        best_similarity_text = "-"
-        if best_similarity_score is not None:
-            best_similarity_text = f"{best_similarity_score:.4f}"
         entry_time = self._format_utc_ts(
-            int(placement.done.checked_at_utc.timestamp()) if placement.done is not None
+            int(placement.done.checked_at_utc.timestamp())
+            if placement.done is not None
             else int(placement.receipt.placed_at_utc.timestamp())
         )
 
         return (
-            f"ОТКРЫТА СДЕЛКА  №: {trade_id}\n"
+            f"ОТКРЫТА СДЕЛКА №: {trade_id}\n"
             f"Инструмент: {local_symbol}\n"
             f"Сторона: {side}\n"
             f"Количество: {quantity}\n"
@@ -234,9 +215,7 @@ class TradeTelegramNotifier:
             f"bar_index: {snapshot.current_bar_index}\n"
             f"Цена входа: {placement.avg_fill_price}\n"
             f"Комиссия входа: {placement.total_commission}\n"
-            f"Лучший similarity-score: {best_similarity_text}\n"
-            f"Прогноз: {forecast_text}\n"
-            f"Лучшие кандидаты:\n{candidates_block}"
+            f"Прогноз: {forecast_text}"
         )
 
     def _build_exit_text(
