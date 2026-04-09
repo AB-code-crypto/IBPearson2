@@ -847,13 +847,13 @@ if __name__ == "__main__":
     #
     # Если хочешь перебор, просто добавляй сюда списки значений.
     PARAM_SPECS = {
-        # "pearson_shortlist_min_correlation": [0.70, 0.75, 0.80],
-        # "pearson_shortlist_top_n": [30, 50],
-        # "forecast_top_n_after_similarity": [5, 7, 10],
-        # "decision_min_last_similarity_score": [0.20, 0.30],
-        # "similarity_weight_range_position": [0.0, 1.0],
-        # "similarity_weight_diff_pearson": [0.0, 1.0],
-        # "similarity_weight_diff_sign_match": [0.0, 1.0],
+        "pearson_shortlist_min_correlation": [0.70, 0.75, 0.80],
+        "pearson_shortlist_top_n": [30, 50],
+        "forecast_top_n_after_similarity": [5, 7, 10],
+        "decision_min_last_similarity_score": [0.20, 0.30],
+        "similarity_weight_range_position": [0.0, 1.0],
+        "similarity_weight_diff_pearson": [0.0, 1.0],
+        "similarity_weight_diff_sign_match": [0.0, 1.0],
     }
 
     cpu_count = os.cpu_count() or 1
