@@ -467,7 +467,8 @@ def run_single_tester(
                 )
 
                 total_snapshot_count += evaluated_rows_count
-                hour_summary_rows.append(hour_result_row)
+                if hour_result_row["trade_opened"]:
+                    hour_summary_rows.append(hour_result_row)
 
             except Exception as exc:
                 skipped_hours.append(

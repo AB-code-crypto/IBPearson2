@@ -1,4 +1,3 @@
-
 import csv
 import os
 import time
@@ -25,7 +24,6 @@ from tester.prepared_candidates_loader import (
     open_prepared_connection,
     load_prepared_candidate_hours,
 )
-
 
 COMMISSION_PER_SIDE_USD = 0.62
 
@@ -68,9 +66,9 @@ def build_prepared_hour_map(prepared_candidate_hours: list[dict]) -> dict:
 
 
 def pick_prepared_hours_by_ranked_candidates(
-    ranked_candidates: list[dict],
-    prepared_hour_map: dict,
-    limit: int | None = None,
+        ranked_candidates: list[dict],
+        prepared_hour_map: dict,
+        limit: int | None = None,
 ) -> list[dict]:
     result = []
     source_items = ranked_candidates if limit is None else ranked_candidates[:limit]
@@ -105,14 +103,14 @@ def chunk_list(items: list[int], chunk_size: int) -> list[list[int]]:
 
 
 def build_base_summary_row(
-    current_hour,
-    row,
-    current_bar_count: int,
-    current_bar_index: int,
-    pearson_ranked_candidates: list[dict],
-    similarity_ranked_candidates: list[dict],
-    forecast_summary: dict,
-    decision_result: dict,
+        current_hour,
+        row,
+        current_bar_count: int,
+        current_bar_index: int,
+        pearson_ranked_candidates: list[dict],
+        similarity_ranked_candidates: list[dict],
+        forecast_summary: dict,
+        decision_result: dict,
 ) -> dict:
     diagnostics = decision_result["diagnostics"]
 
@@ -152,11 +150,11 @@ def build_base_summary_row(
 
 
 def apply_trade_to_row(
-    summary_row: dict,
-    current_hour_rows,
-    side: str,
-    signal_bar_index: int,
-    multiplier: float,
+        summary_row: dict,
+        current_hour_rows,
+        side: str,
+        signal_bar_index: int,
+        multiplier: float,
 ) -> dict:
     entry_exec_index = signal_bar_index + 1
     exit_exec_index = len(current_hour_rows) - 1
@@ -196,8 +194,8 @@ def apply_trade_to_row(
 
 
 def save_hour_summary_to_csv(
-    hour_summary_rows: list[dict],
-    output_csv_path: str | Path,
+        hour_summary_rows: list[dict],
+        output_csv_path: str | Path,
 ):
     output_path = Path(output_csv_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -244,11 +242,11 @@ def save_hour_summary_to_csv(
 
 
 def run_hour_pipeline(
-    current_hour_rows,
-    prepared_candidate_hours,
-    current_hour_start_ts: int,
-    strategy_params,
-    multiplier: float,
+        current_hour_rows,
+        prepared_candidate_hours,
+        current_hour_start_ts: int,
+        strategy_params,
+        multiplier: float,
 ) -> tuple[dict, int]:
     if not current_hour_rows:
         raise ValueError("current_hour_rows is empty")
@@ -401,12 +399,12 @@ def run_hour_pipeline(
 
 
 def process_hour_chunk(
-    instrument_code: str,
-    hour_start_ts_chunk: list[int],
-    strategy_params,
-    price_db_path: str | Path,
-    prepared_db_path: str | Path,
-    multiplier: float,
+        instrument_code: str,
+        hour_start_ts_chunk: list[int],
+        strategy_params,
+        price_db_path: str | Path,
+        prepared_db_path: str | Path,
+        multiplier: float,
 ) -> dict:
     instrument_row = Instrument[instrument_code]
     table_name = build_table_name(
@@ -449,7 +447,8 @@ def process_hour_chunk(
                 )
 
                 total_snapshot_count += evaluated_rows_count
-                hour_summary_rows.append(hour_result_row)
+                if hour_result_row["trade_opened"]:
+                    hour_summary_rows.append(hour_result_row)
 
             except Exception as exc:
                 skipped_hours.append(
@@ -473,15 +472,15 @@ def process_hour_chunk(
 
 
 def run_single_tester_multiprocess(
-    instrument_code: str,
-    start_utc: str,
-    end_utc: str,
-    strategy_params,
-    price_db_path: str | Path,
-    prepared_db_path: str | Path,
-    multiplier: float,
-    max_workers: int,
-    chunk_size: int,
+        instrument_code: str,
+        start_utc: str,
+        end_utc: str,
+        strategy_params,
+        price_db_path: str | Path,
+        prepared_db_path: str | Path,
+        multiplier: float,
+        max_workers: int,
+        chunk_size: int,
 ):
     start_ts = utc_datetime_to_ts(start_utc)
     end_ts = utc_datetime_to_ts(end_utc)
@@ -689,9 +688,9 @@ if __name__ == "__main__":
 
     print("top_hour_reasons =")
     for reason, count in sorted(
-        summary["hour_reason_counts"].items(),
-        key=lambda x: x[1],
-        reverse=True,
+            summary["hour_reason_counts"].items(),
+            key=lambda x: x[1],
+            reverse=True,
     )[:10]:
         print(f"  {reason}: {count}")
 

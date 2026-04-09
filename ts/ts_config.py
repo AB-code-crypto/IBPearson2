@@ -58,8 +58,8 @@ def pearson_eval_end_bar_count_exclusive():
 # И только потом на этот shortlist накладывается второй шаг:
 # similarity score по дополнительным фильтрам.
 
-PEARSON_SHORTLIST_MIN_CORRELATION = 0.80
-PEARSON_SHORTLIST_TOP_N = 30
+PEARSON_SHORTLIST_MIN_CORRELATION = 0.70
+PEARSON_SHORTLIST_TOP_N = 50
 
 # ============================================================
 # Настройки второго шага: score похожести кандидатов
@@ -116,7 +116,7 @@ def similarity_total_weight():
 # После similarity ranking берём только лучшие historical-кандидаты
 # и по ним строим сводный прогноз future-path.
 
-FORECAST_TOP_N_AFTER_SIMILARITY = 5
+FORECAST_TOP_N_AFTER_SIMILARITY = 10
 
 # ============================================================
 # Настройки decision layer
@@ -149,7 +149,7 @@ DECISION_MIN_LAST_SIMILARITY_SCORE = 0.3
 DECISION_MIN_DIRECTIONAL_RATIO = 0.60
 
 # Минимальное по модулю ожидаемое движение к концу часа.
-# 0.0005 = 0.05% при стоимости фьюча в 25000 это даёт 12.5 пунктов минимальное движение
+# 0.0005 = 0.05%
 DECISION_MIN_MEAN_FINAL_MOVE_ABS = 0.0005
 DECISION_MIN_MEDIAN_FINAL_MOVE_ABS = 0.0005
 
