@@ -86,10 +86,6 @@ def build_param_grid(param_specs: dict[str, list]) -> list[dict]:
     return combinations
 
 
-def make_run_name(combo_index: int) -> str:
-    return f"run_{combo_index}"
-
-
 def sanitize_dt_for_filename(dt_str: str) -> str:
     return dt_str.replace("-", "").replace(":", "").replace(" ", "_")
 
@@ -721,7 +717,6 @@ def run_parameter_sweep(
 
     for combo_index, combo_params in enumerate(param_grid, start=1):
         run_started_perf = time.perf_counter()
-        run_name = make_run_name(combo_index)
 
         strategy_params_for_run = replace(DEFAULT_STRATEGY_PARAMS, **combo_params)
 
@@ -733,7 +728,6 @@ def run_parameter_sweep(
 
         print()
         print(f"[run {combo_index}/{total_runs}] started")
-        print(f"run_name = {run_name}")
         print(f"params = {combo_params if combo_params else 'DEFAULT_STRATEGY_PARAMS'}")
         print(f"output_csv_path = {output_csv_path}")
 
@@ -811,7 +805,7 @@ def run_parameter_sweep(
 
     if best_row is not None:
         print("best_run =")
-        print(f"  run_name = {best_row['run_name']}")
+        print(f"  run_index = {best_row['run_index']}")
         print(f"  net_pnl_total = {best_row['net_pnl_total']:.2f}")
         print(f"  trades_count = {best_row['trades_count']}")
 
