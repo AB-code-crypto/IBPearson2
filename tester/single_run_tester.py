@@ -1,5 +1,4 @@
 import csv
-import json
 from collections import Counter
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
@@ -89,7 +88,7 @@ def iter_hour_start_ts_range(start_ts: int, end_ts: int):
         current_hour_start_ts += 3600
 
 
-def build_snapshot_row(
+def build_summary_row(
         current_hour,
         row,
         current_bar_count: int,
@@ -129,115 +128,20 @@ def build_snapshot_row(
     }
 
 
-def build_hour_result(
-        current_hour,
-        snapshots: list[dict],
-) -> dict:
-    first_trade_snapshot = None
-    for snapshot in snapshots:
-        if snapshot["decision"] in {"LONG", "SHORT"}:
-            first_trade_snapshot = snapshot
-            break
+def pick_hour_output_row(hour_rows: list[dict]) -> dict:
+    """
+    Для CSV по часу храним только одну строку:
+    - если был LONG/SHORT, берём первый trade-сигнал часа;
+    - иначе берём последнюю строку часа как финальное состояние.
+    """
+    if not hour_rows:
+        raise ValueError("hour_rows is empty")
 
-    last_snapshot = snapshots[-1] if snapshots else None
+    for row in hour_rows:
+        if row["decision"] in {"LONG", "SHORT"}:
+            return row
 
-    if first_trade_snapshot is not None:
-        summary_source = first_trade_snapshot
-        hour_decision = first_trade_snapshot["decision"]
-        hour_reason = first_trade_snapshot["reason"]
-    elif last_snapshot is not None:
-        summary_source = last_snapshot
-        hour_decision = "NO_TRADE"
-        hour_reason = last_snapshot["reason"]
-    else:
-        summary_source = None
-        hour_decision = "NO_TRADE"
-        hour_reason = "NO_EVAL_WINDOW"
-
-    result = {
-        "hour_start_ts": current_hour.hour_start_ts,
-        "hour_start_ts_ct": current_hour.hour_start_ts_ct,
-        "hour_start": current_hour.hour_start,
-        "hour_start_ct": current_hour.hour_start_ct,
-        "hour_slot_ct": current_hour.hour_slot_ct,
-        "snapshot_count": len(snapshots),
-        "hour_decision": hour_decision,
-        "hour_reason": hour_reason,
-        "first_trade_snapshot": first_trade_snapshot,
-        "snapshots": snapshots,
-    }
-
-    if summary_source is not None:
-        result["summary"] = {
-            "last_bar_time_ts": summary_source["last_bar_time_ts"],
-            "last_bar_time": summary_source["last_bar_time"],
-            "last_bar_time_ts_ct": summary_source["last_bar_time_ts_ct"],
-            "last_bar_time_ct": summary_source["last_bar_time_ct"],
-            "current_bar_index": summary_source["current_bar_index"],
-            "current_bar_count": summary_source["current_bar_count"],
-            "pearson_ranked_count": summary_source["pearson_ranked_count"],
-            "similarity_ranked_count": summary_source["similarity_ranked_count"],
-            "forecast_candidate_count": summary_source["forecast_candidate_count"],
-            "best_similarity_score": summary_source["best_similarity_score"],
-            "last_similarity_score": summary_source["last_similarity_score"],
-            "mean_final_move": summary_source["mean_final_move"],
-            "median_final_move": summary_source["median_final_move"],
-            "positive_ratio": summary_source["positive_ratio"],
-            "negative_ratio": summary_source["negative_ratio"],
-            "mean_max_upside": summary_source["mean_max_upside"],
-            "mean_max_drawdown": summary_source["mean_max_drawdown"],
-        }
-    else:
-        result["summary"] = None
-
-    return result
-
-
-def build_hour_summary_rows(hours: list[dict]) -> list[dict]:
-    rows = []
-
-    for hour in hours:
-        summary = hour["summary"]
-
-        row = {
-            "hour_start_ts": hour["hour_start_ts"],
-            "hour_start_ts_ct": hour["hour_start_ts_ct"],
-            "hour_start": hour["hour_start"],
-            "hour_start_ct": hour["hour_start_ct"],
-            "hour_slot_ct": hour["hour_slot_ct"],
-            "snapshot_count": hour["snapshot_count"],
-            "hour_decision": hour["hour_decision"],
-            "hour_reason": hour["hour_reason"],
-        }
-
-        if summary is not None:
-            row.update(summary)
-        else:
-            row.update(
-                {
-                    "last_bar_time_ts": None,
-                    "last_bar_time": None,
-                    "last_bar_time_ts_ct": None,
-                    "last_bar_time_ct": None,
-                    "current_bar_index": None,
-                    "current_bar_count": None,
-                    "pearson_ranked_count": None,
-                    "similarity_ranked_count": None,
-                    "forecast_candidate_count": None,
-                    "best_similarity_score": None,
-                    "last_similarity_score": None,
-                    "mean_final_move": None,
-                    "median_final_move": None,
-                    "positive_ratio": None,
-                    "negative_ratio": None,
-                    "mean_max_upside": None,
-                    "mean_max_drawdown": None,
-                }
-            )
-
-        rows.append(row)
-
-    return rows
+    return hour_rows[-1]
 
 
 def save_hour_summary_to_csv(
@@ -253,9 +157,6 @@ def save_hour_summary_to_csv(
         "hour_start",
         "hour_start_ct",
         "hour_slot_ct",
-        "snapshot_count",
-        "hour_decision",
-        "hour_reason",
         "last_bar_time_ts",
         "last_bar_time",
         "last_bar_time_ts_ct",
@@ -265,6 +166,8 @@ def save_hour_summary_to_csv(
         "pearson_ranked_count",
         "similarity_ranked_count",
         "forecast_candidate_count",
+        "decision",
+        "reason",
         "best_similarity_score",
         "last_similarity_score",
         "mean_final_move",
@@ -283,20 +186,16 @@ def save_hour_summary_to_csv(
             writer.writerow(row)
 
 
-def save_result_to_json(result: dict, output_json_path: str | Path):
-    output_path = Path(output_json_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with output_path.open("w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
-
-
 def run_hour_pipeline(
         current_hour_rows,
         prepared_candidate_hours,
         current_hour_start_ts: int,
         strategy_params,
-):
+) -> list[dict]:
+    """
+    Возвращает только компактные summary-строки по окну оценки.
+    Никаких snapshots целиком в памяти не держим.
+    """
     if not current_hour_rows:
         raise ValueError("current_hour_rows is empty")
 
@@ -314,7 +213,7 @@ def run_hour_pipeline(
     start_bar_count = strategy_params.pearson_eval_start_bar_count()
     end_bar_count_exclusive = strategy_params.pearson_eval_end_bar_count_exclusive()
 
-    snapshots = []
+    hour_rows = []
 
     for row in current_hour_rows:
         current_hour.add_bar(
@@ -375,8 +274,8 @@ def run_hour_pipeline(
             params=strategy_params,
         )
 
-        snapshots.append(
-            build_snapshot_row(
+        hour_rows.append(
+            build_summary_row(
                 current_hour=current_hour,
                 row=row,
                 current_bar_count=current_bar_count,
@@ -388,10 +287,7 @@ def run_hour_pipeline(
             )
         )
 
-    return build_hour_result(
-        current_hour=current_hour,
-        snapshots=snapshots,
-    )
+    return hour_rows
 
 
 def run_single_tester(
@@ -414,14 +310,18 @@ def run_single_tester(
         bar_size_setting=instrument_row["barSizeSetting"],
     )
 
+    hours_total_in_range = 0
+    hour_summary_rows = []
+    skipped_hours = []
+    total_snapshot_count = 0
+
     price_conn = open_price_connection(price_db_path)
     prepared_conn = open_prepared_connection(prepared_db_path)
 
     try:
-        hours = []
-        skipped_hours = []
-
         for hour_start_ts in iter_hour_start_ts_range(start_ts, end_ts):
+            hours_total_in_range += 1
+
             try:
                 current_hour_rows = load_current_hour_price_rows(
                     price_conn=price_conn,
@@ -439,14 +339,45 @@ def run_single_tester(
                     strategy_params=strategy_params,
                 )
 
-                hour_result = run_hour_pipeline(
+                hour_rows = run_hour_pipeline(
                     current_hour_rows=current_hour_rows,
                     prepared_candidate_hours=prepared_candidate_hours,
                     current_hour_start_ts=hour_start_ts,
                     strategy_params=strategy_params,
                 )
 
-                hours.append(hour_result)
+                if hour_rows:
+                    total_snapshot_count += len(hour_rows)
+                    hour_summary_rows.append(pick_hour_output_row(hour_rows))
+                else:
+                    hour_summary_rows.append(
+                        {
+                            "hour_start_ts": hour_start_ts,
+                            "hour_start_ts_ct": None,
+                            "hour_start": utc_ts_to_text(hour_start_ts),
+                            "hour_start_ct": None,
+                            "hour_slot_ct": None,
+                            "last_bar_time_ts": None,
+                            "last_bar_time": None,
+                            "last_bar_time_ts_ct": None,
+                            "last_bar_time_ct": None,
+                            "current_bar_index": None,
+                            "current_bar_count": None,
+                            "pearson_ranked_count": None,
+                            "similarity_ranked_count": None,
+                            "forecast_candidate_count": None,
+                            "decision": "NO_TRADE",
+                            "reason": "NO_EVAL_WINDOW",
+                            "best_similarity_score": None,
+                            "last_similarity_score": None,
+                            "mean_final_move": None,
+                            "median_final_move": None,
+                            "positive_ratio": None,
+                            "negative_ratio": None,
+                            "mean_max_upside": None,
+                            "mean_max_drawdown": None,
+                        }
+                    )
 
             except Exception as exc:
                 skipped_hours.append(
@@ -457,12 +388,8 @@ def run_single_tester(
                     }
                 )
 
-        hour_summary_rows = build_hour_summary_rows(hours)
-
-        decision_counter = Counter(row["hour_decision"] for row in hour_summary_rows)
-        reason_counter = Counter(row["hour_reason"] for row in hour_summary_rows)
-
-        total_snapshot_count = sum(hour["snapshot_count"] for hour in hours)
+        decision_counter = Counter(row["decision"] for row in hour_summary_rows)
+        reason_counter = Counter(row["reason"] for row in hour_summary_rows)
 
         result = {
             "input": {
@@ -474,14 +401,13 @@ def run_single_tester(
                 "strategy_params": asdict(strategy_params),
             },
             "summary": {
-                "hours_total_in_range": len(list(iter_hour_start_ts_range(start_ts, end_ts))),
-                "hours_processed": len(hours),
+                "hours_total_in_range": hours_total_in_range,
+                "hours_processed": len(hour_summary_rows),
                 "hours_skipped": len(skipped_hours),
                 "total_snapshot_count": total_snapshot_count,
                 "hour_decision_counts": dict(decision_counter),
                 "hour_reason_counts": dict(reason_counter),
             },
-            "hours": hours,
             "skipped_hours": skipped_hours,
         }
 
@@ -525,7 +451,6 @@ if __name__ == "__main__":
         f"{run_name}"
     )
 
-    output_json_path = f"output/json/{output_base_name}.json"
     output_csv_path = f"output/csv/{output_base_name}.csv"
 
     result, hour_summary_rows = run_single_tester(
@@ -537,11 +462,6 @@ if __name__ == "__main__":
         prepared_db_path=prepared_db_path,
     )
 
-    save_result_to_json(
-        result=result,
-        output_json_path=output_json_path,
-    )
-
     save_hour_summary_to_csv(
         hour_summary_rows=hour_summary_rows,
         output_csv_path=output_csv_path,
@@ -549,7 +469,6 @@ if __name__ == "__main__":
 
     summary = result["summary"]
 
-    print(f"saved json: {output_json_path}")
     print(f"saved csv: {output_csv_path}")
     print(f"instrument_code = {instrument_code}")
     print(f"start_utc = {start_utc}")
@@ -564,7 +483,11 @@ if __name__ == "__main__":
         print(f"  {key}: {value}")
 
     print("top_hour_reasons =")
-    for reason, count in Counter(summary["hour_reason_counts"]).most_common(10):
+    for reason, count in sorted(
+            summary["hour_reason_counts"].items(),
+            key=lambda x: x[1],
+            reverse=True,
+    )[:10]:
         print(f"  {reason}: {count}")
 
     if result["skipped_hours"]:
