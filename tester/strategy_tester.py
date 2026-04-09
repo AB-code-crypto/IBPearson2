@@ -28,6 +28,25 @@ from tester.prepared_candidates_loader import (
 
 COMMISSION_PER_SIDE_USD = 0.62
 
+SUMMARY_EXCLUDED_STRATEGY_FIELDS = {
+    "pearson_bar_interval_seconds",
+    "pearson_hour_seconds",
+    "pearson_eval_start_minute",
+    "pearson_eval_end_minute",
+    "search_slot_groups",
+    "similarity_pearson_score_zero_at",
+    "similarity_pearson_score_one_at",
+    "similarity_range_distance_zero_at",
+    "similarity_net_move_distance_zero_at",
+    "similarity_range_position_distance_zero_at",
+    "similarity_mean_abs_diff_distance_zero_at",
+    "similarity_efficiency_distance_zero_at",
+    "similarity_diff_pearson_score_zero_at",
+    "similarity_diff_pearson_score_one_at",
+    "similarity_diff_sign_match_score_zero_at",
+    "similarity_diff_sign_match_score_one_at",
+}
+
 
 def floor_to_hour_ts(ts: int) -> int:
     return (ts // 3600) * 3600
@@ -58,6 +77,10 @@ def format_elapsed(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
+def sanitize_dt_for_filename(dt_str: str) -> str:
+    return dt_str.replace("-", "").replace(":", "").replace(" ", "_")
+
+
 def get_strategy_param_field_names() -> list[str]:
     return [field.name for field in fields(DEFAULT_STRATEGY_PARAMS)]
 
@@ -86,18 +109,14 @@ def build_param_grid(param_specs: dict[str, list]) -> list[dict]:
     return combinations
 
 
-def sanitize_dt_for_filename(dt_str: str) -> str:
-    return dt_str.replace("-", "").replace(":", "").replace(" ", "_")
+def build_run_output_csv_path(output_dir: Path, instrument_code: str, combo_index: int) -> Path:
+    return output_dir / f"strategy_tester_{instrument_code}_{combo_index}.csv"
 
 
 def build_summary_output_csv_path(output_dir: Path, start_utc: str, end_utc: str) -> Path:
     start_part = sanitize_dt_for_filename(start_utc)
     end_part = sanitize_dt_for_filename(end_utc)
     return output_dir / f"parameter_sweep_summary_{start_part}_{end_part}.csv"
-
-
-def build_run_output_csv_path(output_dir: Path, instrument_code: str, combo_index: int) -> Path:
-    return output_dir / f"strategy_tester_{instrument_code}_{combo_index}.csv"
 
 
 def build_prepared_hour_map(prepared_candidate_hours: list[dict]) -> dict:
@@ -109,9 +128,9 @@ def build_prepared_hour_map(prepared_candidate_hours: list[dict]) -> dict:
 
 
 def pick_prepared_hours_by_ranked_candidates(
-        ranked_candidates: list[dict],
-        prepared_hour_map: dict,
-        limit: int | None = None,
+    ranked_candidates: list[dict],
+    prepared_hour_map: dict,
+    limit: int | None = None,
 ) -> list[dict]:
     result = []
     source_items = ranked_candidates if limit is None else ranked_candidates[:limit]
@@ -146,14 +165,14 @@ def chunk_list(items: list[int], chunk_size: int) -> list[list[int]]:
 
 
 def build_base_summary_row(
-        current_hour,
-        row,
-        current_bar_count: int,
-        current_bar_index: int,
-        pearson_ranked_candidates: list[dict],
-        similarity_ranked_candidates: list[dict],
-        forecast_summary: dict,
-        decision_result: dict,
+    current_hour,
+    row,
+    current_bar_count: int,
+    current_bar_index: int,
+    pearson_ranked_candidates: list[dict],
+    similarity_ranked_candidates: list[dict],
+    forecast_summary: dict,
+    decision_result: dict,
 ) -> dict:
     diagnostics = decision_result["diagnostics"]
 
@@ -192,12 +211,13 @@ def build_base_summary_row(
     }
 
 
+
 def apply_trade_to_row(
-        summary_row: dict,
-        current_hour_rows,
-        side: str,
-        signal_bar_index: int,
-        multiplier: float,
+    summary_row: dict,
+    current_hour_rows,
+    side: str,
+    signal_bar_index: int,
+    multiplier: float,
 ) -> dict:
     entry_exec_index = signal_bar_index + 1
     exit_exec_index = len(current_hour_rows) - 1
@@ -234,6 +254,7 @@ def apply_trade_to_row(
     summary_row["exit_price"] = exit_price
     summary_row["net_pnl"] = net_pnl
     return summary_row
+
 
 
 def save_hour_summary_to_csv(hour_summary_rows: list[dict], output_csv_path: str | Path):
@@ -281,6 +302,7 @@ def save_hour_summary_to_csv(hour_summary_rows: list[dict], output_csv_path: str
             writer.writerow(row)
 
 
+
 def save_runs_summary_to_csv(rows: list[dict], output_csv_path: str | Path) -> None:
     output_path = Path(output_csv_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -291,7 +313,6 @@ def save_runs_summary_to_csv(rows: list[dict], output_csv_path: str | Path) -> N
     preferred_prefix = [
         "run_index",
         "hours_total_in_range",
-        "hours_processed",
         "hours_skipped",
         "total_snapshot_count",
         "trades_count",
@@ -325,12 +346,13 @@ def save_runs_summary_to_csv(rows: list[dict], output_csv_path: str | Path) -> N
             writer.writerow(row)
 
 
+
 def run_hour_pipeline(
-        current_hour_rows,
-        prepared_candidate_hours,
-        current_hour_start_ts: int,
-        strategy_params,
-        multiplier: float,
+    current_hour_rows,
+    prepared_candidate_hours,
+    current_hour_start_ts: int,
+    strategy_params,
+    multiplier: float,
 ) -> tuple[dict, int]:
     if not current_hour_rows:
         raise ValueError("current_hour_rows is empty")
@@ -482,13 +504,14 @@ def run_hour_pipeline(
     }, evaluated_rows_count
 
 
+
 def process_hour_chunk(
-        instrument_code: str,
-        hour_start_ts_chunk: list[int],
-        strategy_params,
-        price_db_path: str | Path,
-        prepared_db_path: str | Path,
-        multiplier: float,
+    instrument_code: str,
+    hour_start_ts_chunk: list[int],
+    strategy_params,
+    price_db_path: str | Path,
+    prepared_db_path: str | Path,
+    multiplier: float,
 ) -> dict:
     instrument_row = Instrument[instrument_code]
     table_name = build_table_name(
@@ -555,16 +578,17 @@ def process_hour_chunk(
         prepared_conn.close()
 
 
+
 def run_single_tester_multiprocess(
-        instrument_code: str,
-        start_utc: str,
-        end_utc: str,
-        strategy_params,
-        price_db_path: str | Path,
-        prepared_db_path: str | Path,
-        multiplier: float,
-        max_workers: int,
-        chunk_size: int,
+    instrument_code: str,
+    start_utc: str,
+    end_utc: str,
+    strategy_params,
+    price_db_path: str | Path,
+    prepared_db_path: str | Path,
+    multiplier: float,
+    max_workers: int,
+    chunk_size: int,
 ):
     start_ts = utc_datetime_to_ts(start_utc)
     end_ts = utc_datetime_to_ts(end_utc)
@@ -672,17 +696,18 @@ def run_single_tester_multiprocess(
     return result, hour_summary_rows
 
 
+
 def run_parameter_sweep(
-        instrument_code: str,
-        start_utc: str,
-        end_utc: str,
-        param_specs: dict[str, list],
-        price_db_path: str | Path,
-        prepared_db_path: str | Path,
-        multiplier: float,
-        max_workers: int,
-        chunk_size: int,
-        output_dir: str | Path,
+    instrument_code: str,
+    start_utc: str,
+    end_utc: str,
+    param_specs: dict[str, list],
+    price_db_path: str | Path,
+    prepared_db_path: str | Path,
+    multiplier: float,
+    max_workers: int,
+    chunk_size: int,
+    output_dir: str | Path,
 ):
     sweep_started_at = datetime.now().astimezone()
     sweep_started_perf = time.perf_counter()
@@ -717,7 +742,6 @@ def run_parameter_sweep(
 
     for combo_index, combo_params in enumerate(param_grid, start=1):
         run_started_perf = time.perf_counter()
-
         strategy_params_for_run = replace(DEFAULT_STRATEGY_PARAMS, **combo_params)
 
         output_csv_path = build_run_output_csv_path(
@@ -751,10 +775,15 @@ def run_parameter_sweep(
         run_elapsed_seconds = time.perf_counter() - run_started_perf
         summary = result["summary"]
 
+        strategy_params_dict = {
+            key: value
+            for key, value in asdict(strategy_params_for_run).items()
+            if key not in SUMMARY_EXCLUDED_STRATEGY_FIELDS
+        }
+
         summary_row = {
             "run_index": combo_index,
             "hours_total_in_range": summary["hours_total_in_range"],
-            "hours_processed": summary["hours_processed"],
             "hours_skipped": summary["hours_skipped"],
             "total_snapshot_count": summary["total_snapshot_count"],
             "trades_count": summary["trades_count"],
@@ -763,22 +792,9 @@ def run_parameter_sweep(
             "win_count": summary["win_count"],
             "loss_count": summary["loss_count"],
             "flat_count": summary["flat_count"],
-            "net_pnl_total": summary["net_pnl_total"],
+            "net_pnl_total": round(summary["net_pnl_total"], 2),
             "avg_trade_net_pnl": summary["avg_trade_net_pnl"],
         }
-
-        excluded_param_fields = {
-            "pearson_bar_interval_seconds",
-            "pearson_hour_seconds",
-            "search_slot_groups",
-        }
-
-        strategy_params_dict = {
-            key: value
-            for key, value in asdict(strategy_params_for_run).items()
-            if key not in excluded_param_fields
-        }
-
         summary_row.update(strategy_params_dict)
         summary_rows.append(summary_row)
 
@@ -831,13 +847,13 @@ if __name__ == "__main__":
     #
     # Если хочешь перебор, просто добавляй сюда списки значений.
     PARAM_SPECS = {
-        "pearson_shortlist_min_correlation": [0.70, 0.75, 0.80],
-        "pearson_shortlist_top_n": [30, 50, 80],
-        "forecast_top_n_after_similarity": [5, 7, 10],
-        "decision_min_last_similarity_score": [0.20, 0.30],
-        "similarity_weight_range_position": [0.0, 1.0],
-        "similarity_weight_diff_pearson": [0.0, 1.0],
-        "similarity_weight_diff_sign_match": [0.0, 1.0],
+        # "pearson_shortlist_min_correlation": [0.70, 0.75, 0.80],
+        # "pearson_shortlist_top_n": [30, 50],
+        # "forecast_top_n_after_similarity": [5, 7, 10],
+        # "decision_min_last_similarity_score": [0.20, 0.30],
+        # "similarity_weight_range_position": [0.0, 1.0],
+        # "similarity_weight_diff_pearson": [0.0, 1.0],
+        # "similarity_weight_diff_sign_match": [0.0, 1.0],
     }
 
     cpu_count = os.cpu_count() or 1
