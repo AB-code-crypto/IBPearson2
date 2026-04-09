@@ -27,65 +27,16 @@ def get_strategy_param_field_names() -> list[str]:
     return [field.name for field in fields(DEFAULT_STRATEGY_PARAMS)]
 
 
-def build_numeric_range(
-    start,
-    end,
-    step,
-    round_digits: int | None = None,
-    cast_type: str | None = None,
-):
-    if step == 0:
-        raise ValueError("step must not be 0")
+def normalize_param_spec_values(values) -> list:
+    values = list(values)
 
-    values = []
-    current = start
-
-    if step > 0:
-        condition = lambda x: x <= end + 1e-15
-    else:
-        condition = lambda x: x >= end - 1e-15
-
-    while condition(current):
-        value = current
-
-        if round_digits is not None:
-            value = round(value, round_digits)
-
-        if cast_type == "int":
-            value = int(round(value))
-        elif cast_type == "float":
-            value = float(value)
-
-        values.append(value)
-        current = current + step
+    if not values:
+        raise ValueError("Parameter values list must not be empty")
 
     return values
 
 
-def normalize_param_spec_values(spec: dict):
-    if "values" in spec:
-        values = list(spec["values"])
-        if not values:
-            raise ValueError("spec['values'] must not be empty")
-        return values
-
-    required_keys = {"start", "end", "step"}
-    if not required_keys.issubset(spec.keys()):
-        raise ValueError(
-            "numeric spec must contain start, end, step "
-            f"or explicit values; got keys={list(spec.keys())}"
-        )
-
-    return build_numeric_range(
-        start=spec["start"],
-        end=spec["end"],
-        step=spec["step"],
-        round_digits=spec.get("round_digits"),
-        cast_type=spec.get("cast"),
-    )
-
-
-def build_param_grid(param_specs: dict[str, dict]) -> list[dict]:
+def build_param_grid(param_specs: dict[str, list]) -> list[dict]:
     valid_fields = set(get_strategy_param_field_names())
 
     unknown_fields = [name for name in param_specs.keys() if name not in valid_fields]
@@ -102,20 +53,15 @@ def build_param_grid(param_specs: dict[str, dict]) -> list[dict]:
     return combinations
 
 
-def make_run_name(combo_index: int, combo_params: dict) -> str:
-    parts = [f"{combo_index:04d}"]
-
-    for key, value in combo_params.items():
-        value_str = str(value).replace(".", "_").replace(" ", "")
-        parts.append(f"{key}={value_str}")
-
-    return "__".join(parts)
+def make_run_name(combo_index: int) -> str:
+    return f"run_{combo_index}"
 
 
-def save_runs_summary_to_csv(
-    rows: list[dict],
-    output_csv_path: str | Path,
-):
+def build_run_output_csv_path(output_dir: Path, instrument_code: str, combo_index: int) -> Path:
+    return output_dir / f"single_run_tester_mp_{instrument_code}_{combo_index}.csv"
+
+
+def save_runs_summary_to_csv(rows: list[dict], output_csv_path: str | Path) -> None:
     output_path = Path(output_csv_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -151,63 +97,24 @@ if __name__ == "__main__":
     instrument_row = Instrument[instrument_code]
     multiplier = float(instrument_row["multiplier"])
 
-    # ВАЖНО:
-    # Здесь задаём параметры для перебора.
-    #
-    # Можно использовать два режима:
-    # 1) explicit values:
-    #    "some_param": {"values": [1, 2, 3]}
-    #
-    # 2) numeric range:
-    #    "some_param": {
-    #        "start": 0.70,
-    #        "end": 0.80,
-    #        "step": 0.05,
-    #        "round_digits": 2,
-    #        "cast": "float",   # optional: "int" / "float"
-    #    }
-    #
-    # step может быть и отрицательным.
     PARAM_SPECS = {
-        "pearson_shortlist_min_correlation": {
-            "start": 0.70,
-            "end": 0.80,
-            "step": 0.05,
-            "round_digits": 2,
-            "cast": "float",
-        },
-        "pearson_shortlist_top_n": {
-            "values": [30, 50],
-        },
-        "forecast_top_n_after_similarity": {
-            "values": [5, 7, 10],
-        },
-        "decision_min_last_similarity_score": {
-            "start": 0.20,
-            "end": 0.30,
-            "step": 0.10,
-            "round_digits": 2,
-            "cast": "float",
-        },
-        "similarity_weight_range_position": {
-            "values": [0.0, 1.0],
-        },
-        "similarity_weight_diff_pearson": {
-            "values": [0.0, 1.0],
-        },
-        "similarity_weight_diff_sign_match": {
-            "values": [0.0, 1.0],
-        },
+        "pearson_shortlist_min_correlation": [0.70, 0.75, 0.80],
+        "pearson_shortlist_top_n": [30, 50],
+        "forecast_top_n_after_similarity": [5, 7, 10],
+        "decision_min_last_similarity_score": [0.20, 0.30],
+        "similarity_weight_range_position": [0.0, 1.0],
+        "similarity_weight_diff_pearson": [0.0, 1.0],
+        "similarity_weight_diff_sign_match": [0.0, 1.0],
     }
 
-    # Настройки внутреннего мультипроцессорного тестера
     max_workers = 28
     chunk_size = 1
 
     price_db_path = settings_live.price_db_path
     prepared_db_path = settings_live.prepared_db_path
 
-    output_summary_csv_path = "output/csv/parameter_sweep_summary.csv"
+    output_dir = Path("output/test")
+    output_summary_csv_path = output_dir / "parameter_sweep_summary.csv"
 
     param_grid = build_param_grid(PARAM_SPECS)
     total_runs = len(param_grid)
@@ -216,31 +123,31 @@ if __name__ == "__main__":
     print(f"instrument_code = {instrument_code}")
     print(f"start_utc = {start_utc}")
     print(f"end_utc = {end_utc}")
-    print(f"total_runs = {total_runs}")
     print(f"max_workers = {max_workers}")
     print(f"chunk_size = {chunk_size}")
     print(f"summary_csv = {output_summary_csv_path}")
+    print("param_specs =")
+    for param_name, values in PARAM_SPECS.items():
+        print(f"  {param_name}: {len(values)} values -> {values}")
+    print(f"total_runs = {total_runs}")
     print("sweep_status = started")
 
     summary_rows = []
 
     for combo_index, combo_params in enumerate(param_grid, start=1):
         run_started_perf = time.perf_counter()
-        run_name = make_run_name(combo_index, combo_params)
+        run_name = make_run_name(combo_index)
 
         strategy_params_for_run = replace(
             DEFAULT_STRATEGY_PARAMS,
             **combo_params,
         )
 
-        output_base_name = (
-            f"single_run_tester_mp_"
-            f"{instrument_code}_"
-            f"{start_utc.replace('-', '').replace(':', '').replace(' ', '_')}_"
-            f"{end_utc.replace('-', '').replace(':', '').replace(' ', '_')}_"
-            f"{run_name}"
+        output_csv_path = build_run_output_csv_path(
+            output_dir=output_dir,
+            instrument_code=instrument_code,
+            combo_index=combo_index,
         )
-        output_csv_path = f"output/csv/{output_base_name}.csv"
 
         print()
         print(f"[run {combo_index}/{total_runs}] started")
@@ -274,7 +181,7 @@ if __name__ == "__main__":
             "instrument_code": instrument_code,
             "start_utc": start_utc,
             "end_utc": end_utc,
-            "output_csv_path": output_csv_path,
+            "output_csv_path": str(output_csv_path),
             "hours_total_in_range": summary["hours_total_in_range"],
             "hours_processed": summary["hours_processed"],
             "hours_skipped": summary["hours_skipped"],

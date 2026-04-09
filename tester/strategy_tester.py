@@ -1,7 +1,10 @@
 import csv
+import itertools
+import os
 import time
 from collections import Counter
-from dataclasses import asdict, replace
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import asdict, fields, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,28 +58,60 @@ def format_elapsed(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
+def get_strategy_param_field_names() -> list[str]:
+    return [field.name for field in fields(DEFAULT_STRATEGY_PARAMS)]
+
+
+def normalize_param_spec_values(values) -> list:
+    values = list(values)
+    if not values:
+        raise ValueError("Parameter values list must not be empty")
+    return values
+
+
+def build_param_grid(param_specs: dict[str, list]) -> list[dict]:
+    valid_fields = set(get_strategy_param_field_names())
+
+    unknown_fields = [name for name in param_specs.keys() if name not in valid_fields]
+    if unknown_fields:
+        raise ValueError(f"Unknown StrategyParams fields: {unknown_fields}")
+
+    param_names = list(param_specs.keys())
+    param_value_lists = [normalize_param_spec_values(param_specs[name]) for name in param_names]
+
+    combinations = []
+    for combo_values in itertools.product(*param_value_lists):
+        combinations.append(dict(zip(param_names, combo_values)))
+
+    return combinations
+
+
+def make_run_name(combo_index: int) -> str:
+    return f"run_{combo_index}"
+
+
+def build_run_output_csv_path(output_dir: Path, instrument_code: str, combo_index: int) -> Path:
+    return output_dir / f"strategy_tester_{instrument_code}_{combo_index}.csv"
+
+
 def build_prepared_hour_map(prepared_candidate_hours: list[dict]) -> dict:
     result = {}
-
     for item in prepared_candidate_hours:
         key = (item["hour_start_ts"], item["hour_start_ts_ct"])
         result[key] = item
-
     return result
 
 
 def pick_prepared_hours_by_ranked_candidates(
-        ranked_candidates: list[dict],
-        prepared_hour_map: dict,
-        limit: int | None = None,
+    ranked_candidates: list[dict],
+    prepared_hour_map: dict,
+    limit: int | None = None,
 ) -> list[dict]:
     result = []
-
     source_items = ranked_candidates if limit is None else ranked_candidates[:limit]
 
     for item in source_items:
         key = (item["hour_start_ts"], item["hour_start_ts_ct"])
-
         prepared_hour_payload = prepared_hour_map.get(key)
         if prepared_hour_payload is None:
             raise ValueError(
@@ -84,7 +119,6 @@ def pick_prepared_hours_by_ranked_candidates(
                 f"hour_start_ts={item['hour_start_ts']}, "
                 f"hour_start_ts_ct={item['hour_start_ts_ct']}"
             )
-
         result.append(prepared_hour_payload)
 
     return result
@@ -99,15 +133,21 @@ def iter_hour_start_ts_range(start_ts: int, end_ts: int):
         current_hour_start_ts += 3600
 
 
+def chunk_list(items: list[int], chunk_size: int) -> list[list[int]]:
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+    return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
+
+
 def build_base_summary_row(
-        current_hour,
-        row,
-        current_bar_count: int,
-        current_bar_index: int,
-        pearson_ranked_candidates: list[dict],
-        similarity_ranked_candidates: list[dict],
-        forecast_summary: dict,
-        decision_result: dict,
+    current_hour,
+    row,
+    current_bar_count: int,
+    current_bar_index: int,
+    pearson_ranked_candidates: list[dict],
+    similarity_ranked_candidates: list[dict],
+    forecast_summary: dict,
+    decision_result: dict,
 ) -> dict:
     diagnostics = decision_result["diagnostics"]
 
@@ -147,11 +187,11 @@ def build_base_summary_row(
 
 
 def apply_trade_to_row(
-        summary_row: dict,
-        current_hour_rows,
-        side: str,
-        signal_bar_index: int,
-        multiplier: float,
+    summary_row: dict,
+    current_hour_rows,
+    side: str,
+    signal_bar_index: int,
+    multiplier: float,
 ) -> dict:
     entry_exec_index = signal_bar_index + 1
     exit_exec_index = len(current_hour_rows) - 1
@@ -187,14 +227,10 @@ def apply_trade_to_row(
     summary_row["entry_price"] = entry_price
     summary_row["exit_price"] = exit_price
     summary_row["net_pnl"] = net_pnl
-
     return summary_row
 
 
-def save_hour_summary_to_csv(
-        hour_summary_rows: list[dict],
-        output_csv_path: str | Path,
-):
+def save_hour_summary_to_csv(hour_summary_rows: list[dict], output_csv_path: str | Path):
     output_path = Path(output_csv_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -235,23 +271,68 @@ def save_hour_summary_to_csv(
     with output_path.open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-
         for row in hour_summary_rows:
             writer.writerow(row)
 
 
+def save_runs_summary_to_csv(rows: list[dict], output_csv_path: str | Path) -> None:
+    output_path = Path(output_csv_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not rows:
+        raise ValueError("rows is empty")
+
+    preferred_prefix = [
+        "run_index",
+        "run_name",
+        "instrument_code",
+        "start_utc",
+        "end_utc",
+        "output_csv_path",
+        "hours_total_in_range",
+        "hours_processed",
+        "hours_skipped",
+        "total_snapshot_count",
+        "trades_count",
+        "long_count",
+        "short_count",
+        "win_count",
+        "loss_count",
+        "flat_count",
+        "net_pnl_total",
+        "avg_trade_net_pnl",
+        "run_elapsed_seconds",
+        "run_elapsed_hms",
+    ]
+
+    all_keys = []
+    seen = set()
+
+    for key in preferred_prefix:
+        if key not in seen and any(key in row for row in rows):
+            seen.add(key)
+            all_keys.append(key)
+
+    for row in rows:
+        for key in row.keys():
+            if key not in seen:
+                seen.add(key)
+                all_keys.append(key)
+
+    with output_path.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=all_keys)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
 def run_hour_pipeline(
-        current_hour_rows,
-        prepared_candidate_hours,
-        current_hour_start_ts: int,
-        strategy_params,
-        multiplier: float,
+    current_hour_rows,
+    prepared_candidate_hours,
+    current_hour_start_ts: int,
+    strategy_params,
+    multiplier: float,
 ) -> tuple[dict, int]:
-    """
-    Возвращает только одну итоговую строку по часу.
-    Если сигнал найден, сразу считаем сделку и выходим из часа.
-    Если сигнал не найден, возвращаем последнюю строку окна входа.
-    """
     if not current_hour_rows:
         raise ValueError("current_hour_rows is empty")
 
@@ -268,11 +349,8 @@ def run_hour_pipeline(
 
     start_bar_count = strategy_params.pearson_eval_start_bar_count()
     end_bar_count_exclusive = strategy_params.pearson_eval_end_bar_count_exclusive()
-
     start_eval_index = max(start_bar_count - 1, 0)
 
-    # Быстро "догоняем" текущее состояние часа до начала окна входа,
-    # не делая лишних проверок decision на первых 30 минутах.
     for row in current_hour_rows[:start_eval_index]:
         current_hour.add_bar(
             ask_open=row["ask_open"],
@@ -405,42 +483,29 @@ def run_hour_pipeline(
     }, evaluated_rows_count
 
 
-def run_single_tester(
-        instrument_code: str,
-        start_utc: str,
-        end_utc: str,
-        strategy_params,
-        price_db_path: str | Path,
-        prepared_db_path: str | Path,
-        multiplier: float,
-        progress_every_hours: int = 1,
-):
-    start_ts = utc_datetime_to_ts(start_utc)
-    end_ts = utc_datetime_to_ts(end_utc)
-
-    if end_ts < start_ts:
-        raise ValueError(f"end_utc < start_utc: {end_utc} < {start_utc}")
-
+def process_hour_chunk(
+    instrument_code: str,
+    hour_start_ts_chunk: list[int],
+    strategy_params,
+    price_db_path: str | Path,
+    prepared_db_path: str | Path,
+    multiplier: float,
+) -> dict:
     instrument_row = Instrument[instrument_code]
     table_name = build_table_name(
         instrument_code=instrument_code,
         bar_size_setting=instrument_row["barSizeSetting"],
     )
 
-    all_hour_starts = list(iter_hour_start_ts_range(start_ts, end_ts))
-    hours_total_in_range = len(all_hour_starts)
-
     hour_summary_rows = []
     skipped_hours = []
     total_snapshot_count = 0
-
-    run_started_perf = time.perf_counter()
 
     price_conn = open_price_connection(price_db_path)
     prepared_conn = open_prepared_connection(prepared_db_path)
 
     try:
-        for idx, hour_start_ts in enumerate(all_hour_starts, start=1):
+        for hour_start_ts in hour_start_ts_chunk:
             try:
                 current_hour_rows = load_current_hour_price_rows(
                     price_conn=price_conn,
@@ -479,76 +544,271 @@ def run_single_tester(
                     }
                 )
 
-            if (
-                    idx == 1
-                    or idx == hours_total_in_range
-                    or idx % max(progress_every_hours, 1) == 0
-            ):
-                elapsed = time.perf_counter() - run_started_perf
-                percent = (idx / hours_total_in_range) * 100 if hours_total_in_range else 100.0
-                print(
-                    f"[progress] {idx}/{hours_total_in_range} hours "
-                    f"({percent:.1f}%) | current_hour={utc_ts_to_text(hour_start_ts)} "
-                    f"| elapsed={format_elapsed(elapsed)}"
-                )
-
-        decision_counter = Counter(row["decision"] for row in hour_summary_rows)
-        reason_counter = Counter(row["reason"] for row in hour_summary_rows)
-
-        trade_rows = [row for row in hour_summary_rows if row["trade_opened"]]
-        long_count = sum(1 for row in trade_rows if row["trade_side"] == "LONG")
-        short_count = sum(1 for row in trade_rows if row["trade_side"] == "SHORT")
-        win_count = sum(1 for row in trade_rows if row["net_pnl"] is not None and row["net_pnl"] > 0)
-        loss_count = sum(1 for row in trade_rows if row["net_pnl"] is not None and row["net_pnl"] < 0)
-        flat_count = sum(1 for row in trade_rows if row["net_pnl"] is not None and row["net_pnl"] == 0)
-        net_pnl_total = sum(row["net_pnl"] for row in trade_rows if row["net_pnl"] is not None)
-        avg_trade_net_pnl = (net_pnl_total / len(trade_rows)) if trade_rows else 0.0
-
-        elapsed_seconds = time.perf_counter() - run_started_perf
-
-        result = {
-            "input": {
-                "instrument_code": instrument_code,
-                "start_utc": start_utc,
-                "end_utc": end_utc,
-                "start_ts": start_ts,
-                "end_ts": end_ts,
-                "strategy_params": asdict(strategy_params),
-                "multiplier": multiplier,
-                "commission_per_side_usd": COMMISSION_PER_SIDE_USD,
-            },
-            "summary": {
-                "hours_total_in_range": hours_total_in_range,
-                "hours_processed": len(hour_summary_rows),
-                "hours_skipped": len(skipped_hours),
-                "total_snapshot_count": total_snapshot_count,
-                "hour_decision_counts": dict(decision_counter),
-                "hour_reason_counts": dict(reason_counter),
-                "trades_count": len(trade_rows),
-                "long_count": long_count,
-                "short_count": short_count,
-                "win_count": win_count,
-                "loss_count": loss_count,
-                "flat_count": flat_count,
-                "net_pnl_total": net_pnl_total,
-                "avg_trade_net_pnl": avg_trade_net_pnl,
-                "elapsed_seconds": elapsed_seconds,
-                "elapsed_hms": format_elapsed(elapsed_seconds),
-            },
+        return {
+            "hour_summary_rows": hour_summary_rows,
             "skipped_hours": skipped_hours,
+            "total_snapshot_count": total_snapshot_count,
+            "chunk_hours_count": len(hour_start_ts_chunk),
         }
-
-        return result, hour_summary_rows
 
     finally:
         price_conn.close()
         prepared_conn.close()
 
 
-if __name__ == "__main__":
-    tester_started_at = datetime.now().astimezone()
-    tester_started_perf = time.perf_counter()
+def run_single_tester_multiprocess(
+    instrument_code: str,
+    start_utc: str,
+    end_utc: str,
+    strategy_params,
+    price_db_path: str | Path,
+    prepared_db_path: str | Path,
+    multiplier: float,
+    max_workers: int,
+    chunk_size: int,
+):
+    start_ts = utc_datetime_to_ts(start_utc)
+    end_ts = utc_datetime_to_ts(end_utc)
 
+    if end_ts < start_ts:
+        raise ValueError(f"end_utc < start_utc: {end_utc} < {start_utc}")
+
+    all_hour_starts = list(iter_hour_start_ts_range(start_ts, end_ts))
+    hours_total_in_range = len(all_hour_starts)
+
+    if not all_hour_starts:
+        raise ValueError("No hours in requested range")
+
+    hour_chunks = chunk_list(all_hour_starts, chunk_size)
+    run_started_perf = time.perf_counter()
+
+    hour_summary_rows = []
+    skipped_hours = []
+    total_snapshot_count = 0
+    completed_hours = 0
+    completed_chunks = 0
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(
+                process_hour_chunk,
+                instrument_code,
+                hour_chunk,
+                strategy_params,
+                price_db_path,
+                prepared_db_path,
+                multiplier,
+            )
+            for hour_chunk in hour_chunks
+        ]
+
+        for future in as_completed(futures):
+            chunk_result = future.result()
+
+            hour_summary_rows.extend(chunk_result["hour_summary_rows"])
+            skipped_hours.extend(chunk_result["skipped_hours"])
+            total_snapshot_count += chunk_result["total_snapshot_count"]
+            completed_hours += chunk_result["chunk_hours_count"]
+            completed_chunks += 1
+
+            elapsed = time.perf_counter() - run_started_perf
+            percent = (completed_hours / hours_total_in_range) * 100 if hours_total_in_range else 100.0
+            print(
+                f"[progress] {completed_hours}/{hours_total_in_range} hours "
+                f"({percent:.1f}%) | chunks={completed_chunks}/{len(hour_chunks)} "
+                f"| elapsed={format_elapsed(elapsed)}"
+            )
+
+    hour_summary_rows.sort(key=lambda row: row["hour_start_ts"])
+    skipped_hours.sort(key=lambda row: row["hour_start_ts"])
+
+    decision_counter = Counter(row["decision"] for row in hour_summary_rows)
+    reason_counter = Counter(row["reason"] for row in hour_summary_rows)
+
+    trade_rows = [row for row in hour_summary_rows if row["trade_opened"]]
+    long_count = sum(1 for row in trade_rows if row["trade_side"] == "LONG")
+    short_count = sum(1 for row in trade_rows if row["trade_side"] == "SHORT")
+    win_count = sum(1 for row in trade_rows if row["net_pnl"] is not None and row["net_pnl"] > 0)
+    loss_count = sum(1 for row in trade_rows if row["net_pnl"] is not None and row["net_pnl"] < 0)
+    flat_count = sum(1 for row in trade_rows if row["net_pnl"] is not None and row["net_pnl"] == 0)
+    net_pnl_total = sum(row["net_pnl"] for row in trade_rows if row["net_pnl"] is not None)
+    avg_trade_net_pnl = (net_pnl_total / len(trade_rows)) if trade_rows else 0.0
+
+    elapsed_seconds = time.perf_counter() - run_started_perf
+
+    result = {
+        "input": {
+            "instrument_code": instrument_code,
+            "start_utc": start_utc,
+            "end_utc": end_utc,
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            "strategy_params": asdict(strategy_params),
+            "multiplier": multiplier,
+            "commission_per_side_usd": COMMISSION_PER_SIDE_USD,
+            "max_workers": max_workers,
+            "chunk_size": chunk_size,
+        },
+        "summary": {
+            "hours_total_in_range": hours_total_in_range,
+            "hours_processed": len(hour_summary_rows),
+            "hours_skipped": len(skipped_hours),
+            "total_snapshot_count": total_snapshot_count,
+            "hour_decision_counts": dict(decision_counter),
+            "hour_reason_counts": dict(reason_counter),
+            "trades_count": len(trade_rows),
+            "long_count": long_count,
+            "short_count": short_count,
+            "win_count": win_count,
+            "loss_count": loss_count,
+            "flat_count": flat_count,
+            "net_pnl_total": net_pnl_total,
+            "avg_trade_net_pnl": avg_trade_net_pnl,
+            "elapsed_seconds": elapsed_seconds,
+            "elapsed_hms": format_elapsed(elapsed_seconds),
+        },
+        "skipped_hours": skipped_hours,
+    }
+
+    return result, hour_summary_rows
+
+
+def run_parameter_sweep(
+    instrument_code: str,
+    start_utc: str,
+    end_utc: str,
+    param_specs: dict[str, list],
+    price_db_path: str | Path,
+    prepared_db_path: str | Path,
+    multiplier: float,
+    max_workers: int,
+    chunk_size: int,
+    output_dir: str | Path,
+):
+    sweep_started_at = datetime.now().astimezone()
+    sweep_started_perf = time.perf_counter()
+
+    output_dir = Path(output_dir)
+    output_summary_csv_path = output_dir / "parameter_sweep_summary.csv"
+
+    param_grid = build_param_grid(param_specs)
+    total_runs = len(param_grid)
+
+    print(f"sweep_start_local = {sweep_started_at.strftime('%Y-%m-%d %H:%M:%S %z')}")
+    print(f"instrument_code = {instrument_code}")
+    print(f"start_utc = {start_utc}")
+    print(f"end_utc = {end_utc}")
+    print(f"max_workers = {max_workers}")
+    print(f"chunk_size = {chunk_size}")
+    print(f"summary_csv = {output_summary_csv_path}")
+    print("param_specs =")
+    if param_specs:
+        for param_name, values in param_specs.items():
+            print(f"  {param_name}: {len(values)} values -> {values}")
+    else:
+        print("  {} -> будет один прогон на DEFAULT_STRATEGY_PARAMS")
+    print(f"total_runs = {total_runs}")
+    print("sweep_status = started")
+
+    summary_rows = []
+
+    for combo_index, combo_params in enumerate(param_grid, start=1):
+        run_started_perf = time.perf_counter()
+        run_name = make_run_name(combo_index)
+
+        strategy_params_for_run = replace(DEFAULT_STRATEGY_PARAMS, **combo_params)
+
+        output_csv_path = build_run_output_csv_path(
+            output_dir=output_dir,
+            instrument_code=instrument_code,
+            combo_index=combo_index,
+        )
+
+        print()
+        print(f"[run {combo_index}/{total_runs}] started")
+        print(f"run_name = {run_name}")
+        print(f"params = {combo_params if combo_params else 'DEFAULT_STRATEGY_PARAMS'}")
+        print(f"output_csv_path = {output_csv_path}")
+
+        result, hour_summary_rows = run_single_tester_multiprocess(
+            instrument_code=instrument_code,
+            start_utc=start_utc,
+            end_utc=end_utc,
+            strategy_params=strategy_params_for_run,
+            price_db_path=price_db_path,
+            prepared_db_path=prepared_db_path,
+            multiplier=multiplier,
+            max_workers=max_workers,
+            chunk_size=chunk_size,
+        )
+
+        save_hour_summary_to_csv(
+            hour_summary_rows=hour_summary_rows,
+            output_csv_path=output_csv_path,
+        )
+
+        run_elapsed_seconds = time.perf_counter() - run_started_perf
+        summary = result["summary"]
+
+        summary_row = {
+            "run_index": combo_index,
+            "run_name": run_name,
+            "instrument_code": instrument_code,
+            "start_utc": start_utc,
+            "end_utc": end_utc,
+            "output_csv_path": str(output_csv_path),
+            "hours_total_in_range": summary["hours_total_in_range"],
+            "hours_processed": summary["hours_processed"],
+            "hours_skipped": summary["hours_skipped"],
+            "total_snapshot_count": summary["total_snapshot_count"],
+            "trades_count": summary["trades_count"],
+            "long_count": summary["long_count"],
+            "short_count": summary["short_count"],
+            "win_count": summary["win_count"],
+            "loss_count": summary["loss_count"],
+            "flat_count": summary["flat_count"],
+            "net_pnl_total": summary["net_pnl_total"],
+            "avg_trade_net_pnl": summary["avg_trade_net_pnl"],
+            "run_elapsed_seconds": run_elapsed_seconds,
+            "run_elapsed_hms": format_elapsed(run_elapsed_seconds),
+        }
+
+        summary_row.update(asdict(strategy_params_for_run))
+        summary_rows.append(summary_row)
+
+        summary_rows_sorted = sorted(summary_rows, key=lambda row: row["net_pnl_total"], reverse=True)
+        save_runs_summary_to_csv(rows=summary_rows_sorted, output_csv_path=output_summary_csv_path)
+
+        print(f"[run {combo_index}/{total_runs}] finished")
+        print(f"net_pnl_total = {summary['net_pnl_total']:.2f}")
+        print(f"trades_count = {summary['trades_count']}")
+        print(f"run_elapsed_hms = {format_elapsed(run_elapsed_seconds)}")
+
+    sweep_elapsed_seconds = time.perf_counter() - sweep_started_perf
+    sweep_finished_at = datetime.now().astimezone()
+
+    best_row = None
+    if summary_rows:
+        best_row = max(summary_rows, key=lambda row: row["net_pnl_total"])
+
+    print()
+    print(f"sweep_finish_local = {sweep_finished_at.strftime('%Y-%m-%d %H:%M:%S %z')}")
+    print(f"sweep_elapsed_seconds = {sweep_elapsed_seconds:.3f}")
+    print(f"sweep_elapsed_hms = {format_elapsed(sweep_elapsed_seconds)}")
+    print(f"summary_csv_saved = {output_summary_csv_path}")
+
+    if best_row is not None:
+        print("best_run =")
+        print(f"  run_name = {best_row['run_name']}")
+        print(f"  net_pnl_total = {best_row['net_pnl_total']:.2f}")
+        print(f"  trades_count = {best_row['trades_count']}")
+
+    print("sweep_status = finished")
+
+    return summary_rows
+
+
+if __name__ == "__main__":
     instrument_code = "MNQ"
 
     # UTC input range
@@ -558,96 +818,40 @@ if __name__ == "__main__":
     instrument_row = Instrument[instrument_code]
     multiplier = float(instrument_row["multiplier"])
 
-    # Один объект параметров на весь прогон
-    strategy_params_for_run = replace(
-        DEFAULT_STRATEGY_PARAMS,
-        pearson_shortlist_min_correlation=0.80,
-        pearson_shortlist_top_n=30,
-        forecast_top_n_after_similarity=5,
-        decision_min_last_similarity_score=0.3,
-        similarity_weight_range_position=0.0,
-        similarity_weight_diff_pearson=0.0,
-        similarity_weight_diff_sign_match=0.0,
-    )
+    # Как запустить дефолтные настройки:
+    # 1) оставь PARAM_SPECS = {}
+    # 2) запусти файл командой:
+    #    python tester/strategy_tester.py
+    #
+    # Если хочешь перебор, просто добавляй сюда списки значений.
+    PARAM_SPECS = {
+        # "pearson_shortlist_min_correlation": [0.70, 0.75, 0.80],
+        # "pearson_shortlist_top_n": [30, 50],
+        # "forecast_top_n_after_similarity": [5, 7, 10],
+        # "decision_min_last_similarity_score": [0.20, 0.30],
+        # "similarity_weight_range_position": [0.0, 1.0],
+        # "similarity_weight_diff_pearson": [0.0, 1.0],
+        # "similarity_weight_diff_sign_match": [0.0, 1.0],
+    }
 
-    # Удобное имя прогона, чтобы сравнивать варианты
-    run_name = "baseline"
+    cpu_count = os.cpu_count() or 1
+    max_workers = min(28, cpu_count)
+    chunk_size = 1
 
     price_db_path = settings_live.price_db_path
     prepared_db_path = settings_live.prepared_db_path
 
-    output_base_name = (
-        f"single_run_tester_"
-        f"{instrument_code}_"
-        f"{start_utc.replace('-', '').replace(':', '').replace(' ', '_')}_"
-        f"{end_utc.replace('-', '').replace(':', '').replace(' ', '_')}_"
-        f"{run_name}"
-    )
+    output_dir = Path("output/test")
 
-    output_csv_path = f"output/csv/{output_base_name}.csv"
-
-    print(f"tester_start_local = {tester_started_at.strftime('%Y-%m-%d %H:%M:%S %z')}")
-    print(f"instrument_code = {instrument_code}")
-    print(f"start_utc = {start_utc}")
-    print(f"end_utc = {end_utc}")
-    print(f"run_name = {run_name}")
-    print(f"output_csv_path = {output_csv_path}")
-    print("tester_status = started")
-
-    result, hour_summary_rows = run_single_tester(
+    run_parameter_sweep(
         instrument_code=instrument_code,
         start_utc=start_utc,
         end_utc=end_utc,
-        strategy_params=strategy_params_for_run,
+        param_specs=PARAM_SPECS,
         price_db_path=price_db_path,
         prepared_db_path=prepared_db_path,
         multiplier=multiplier,
-        progress_every_hours=1,
+        max_workers=max_workers,
+        chunk_size=chunk_size,
+        output_dir=output_dir,
     )
-
-    save_hour_summary_to_csv(
-        hour_summary_rows=hour_summary_rows,
-        output_csv_path=output_csv_path,
-    )
-
-    tester_finished_at = datetime.now().astimezone()
-    tester_elapsed_seconds = time.perf_counter() - tester_started_perf
-
-    summary = result["summary"]
-
-    print(f"saved csv: {output_csv_path}")
-    print(f"tester_finish_local = {tester_finished_at.strftime('%Y-%m-%d %H:%M:%S %z')}")
-    print(f"tester_elapsed_seconds = {tester_elapsed_seconds:.3f}")
-    print(f"tester_elapsed_hms = {format_elapsed(tester_elapsed_seconds)}")
-    print(f"hours_total_in_range = {summary['hours_total_in_range']}")
-    print(f"hours_processed = {summary['hours_processed']}")
-    print(f"hours_skipped = {summary['hours_skipped']}")
-    print(f"total_snapshot_count = {summary['total_snapshot_count']}")
-    print(f"trades_count = {summary['trades_count']}")
-    print(f"long_count = {summary['long_count']}")
-    print(f"short_count = {summary['short_count']}")
-    print(f"win_count = {summary['win_count']}")
-    print(f"loss_count = {summary['loss_count']}")
-    print(f"flat_count = {summary['flat_count']}")
-    print(f"net_pnl_total = {summary['net_pnl_total']:.2f}")
-    print(f"avg_trade_net_pnl = {summary['avg_trade_net_pnl']:.2f}")
-
-    print("hour_decision_counts =")
-    for key, value in summary["hour_decision_counts"].items():
-        print(f"  {key}: {value}")
-
-    print("top_hour_reasons =")
-    for reason, count in sorted(
-            summary["hour_reason_counts"].items(),
-            key=lambda x: x[1],
-            reverse=True,
-    )[:10]:
-        print(f"  {reason}: {count}")
-
-    if result["skipped_hours"]:
-        print("first_skipped_hour =")
-        first_skipped = result["skipped_hours"][0]
-        print(f"  hour_start = {first_skipped['hour_start']}")
-        print(f"  error = {first_skipped['error']}")
-
-    print("tester_status = finished")
