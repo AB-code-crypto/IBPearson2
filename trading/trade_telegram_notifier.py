@@ -28,7 +28,8 @@ class TradeTelegramNotifier:
         self.trade_db_path = settings.trade_db_path
         self.output_dir = Path(settings.trade_db_path).resolve().parent / "telegram_trade_plots"
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.max_plot_candidates = 5
+
+        # Текстовый блок пока оставляем компактным.
         self.max_text_candidates = 3
 
     async def close(self):
@@ -307,9 +308,38 @@ class TradeTelegramNotifier:
             f"Комиссия: {total_commissions}"
         )
 
+    def _get_plot_candidates(self, snapshot):
+        ranked_similarity_candidates = list(snapshot.ranked_similarity_candidates or [])
+        if not ranked_similarity_candidates:
+            return []
+
+        forecast_summary = snapshot.forecast_summary or {}
+        future_items = forecast_summary.get("future_items") or []
+
+        # fallback: если forecast_summary почему-то пустой, рисуем всё, что есть в snapshot
+        if not future_items:
+            return ranked_similarity_candidates
+
+        forecast_hour_start_ts = {
+            item["hour_start_ts"]
+            for item in future_items
+            if item.get("hour_start_ts") is not None
+        }
+        if not forecast_hour_start_ts:
+            return ranked_similarity_candidates
+
+        # Очень важно: сохраняем порядок ranked_similarity_candidates,
+        # чтобы rank на графике совпадал с similarity-ranking.
+        return [
+            item
+            for item in ranked_similarity_candidates
+            if item["hour_start_ts"] in forecast_hour_start_ts
+        ]
+
     def _build_entry_plot(self, *, snapshot, pearson_live_runtime, trade_id):
         if pearson_live_runtime is None:
             return None
+
         if pearson_live_runtime.current_hour is None:
             return None
 
@@ -317,14 +347,16 @@ class TradeTelegramNotifier:
         if not current_values:
             return None
 
-        ranked_similarity_candidates = snapshot.ranked_similarity_candidates[: self.max_plot_candidates]
+        ranked_similarity_candidates = self._get_plot_candidates(snapshot)
         prepared_hours_map = pearson_live_runtime.current_hour_prepared_hours_map
+
         output_path = self.output_dir / (
             f"trade_entry_{trade_id}_{snapshot.hour_start_ts}_{snapshot.current_bar_index}.png"
         )
 
-        plt.figure(figsize=(14, 8))
+        plt.figure(figsize=(16, 9))
         current_x = list(range(len(current_values)))
+
         plt.plot(
             current_x,
             current_values,
@@ -336,8 +368,10 @@ class TradeTelegramNotifier:
             hour_start_ts = item["hour_start_ts"]
             if hour_start_ts not in prepared_hours_map:
                 continue
+
             candidate_y = prepared_hours_map[hour_start_ts]["y"]
             candidate_x = list(range(len(candidate_y)))
+
             plt.plot(
                 candidate_x,
                 candidate_y,
@@ -351,12 +385,14 @@ class TradeTelegramNotifier:
             )
 
         if snapshot.forecast_summary is not None:
-            mean_future_path = snapshot.forecast_summary["mean_future_path"]
-            median_future_path = snapshot.forecast_summary["median_future_path"]
+            mean_future_path = snapshot.forecast_summary.get("mean_future_path") or []
+            median_future_path = snapshot.forecast_summary.get("median_future_path") or []
+
             if mean_future_path:
                 start_x = snapshot.current_bar_index + 1
                 future_x = list(range(start_x, start_x + len(mean_future_path)))
                 future_y = [current_values[-1] + value for value in mean_future_path]
+
                 plt.plot(
                     future_x,
                     future_y,
@@ -364,10 +400,12 @@ class TradeTelegramNotifier:
                     linestyle="--",
                     label="Средний future-path",
                 )
+
             if median_future_path:
                 start_x = snapshot.current_bar_index + 1
                 future_x = list(range(start_x, start_x + len(median_future_path)))
                 future_y = [current_values[-1] + value for value in median_future_path]
+
                 plt.plot(
                     future_x,
                     future_y,
@@ -382,19 +420,28 @@ class TradeTelegramNotifier:
             linewidth=1.5,
             label=f"Точка входа: bar_index={snapshot.current_bar_index}",
         )
+
         title_reason = "-"
         if snapshot.decision_result is not None:
             title_reason = snapshot.decision_result["decision"]
+
+        plotted_count = len(ranked_similarity_candidates)
+
         plt.title(
-            f"Trade Entry | {title_reason} | CT {snapshot.hour_start_ct} | trade_id={trade_id}"
+            f"Trade Entry | {title_reason} | CT {snapshot.hour_start_ct} | "
+            f"trade_id={trade_id} | forecast_n={plotted_count}"
         )
         plt.xlabel("bar_index")
         plt.ylabel("y")
-        plt.legend(loc="best", fontsize=8)
+
+        # Когда линий много, легенду лучше вынести наружу.
+        plt.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=8)
         plt.grid(True)
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0, 0.80, 1])
+
         plt.savefig(output_path, dpi=150)
         plt.close()
+
         return output_path
 
     def _build_promo_entry_plot(self, *, snapshot, pearson_live_runtime, trade_id):

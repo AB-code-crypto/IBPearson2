@@ -553,6 +553,18 @@ class DecisionOrderExecutor:
         )
 
     def _log_entry_success(self, *, trade_id, snapshot, decision, placement):
+        best_similarity_score = None
+        if snapshot.ranked_similarity_candidates:
+            best_similarity_score = snapshot.ranked_similarity_candidates[0]["final_score"]
+
+        forecast_candidate_count = 0
+        if snapshot.forecast_summary is not None:
+            forecast_candidate_count = int(snapshot.forecast_summary.get("candidate_count") or 0)
+
+        best_similarity_text = "-"
+        if best_similarity_score is not None:
+            best_similarity_text = f"{best_similarity_score:.4f}"
+
         log_info(
             logger,
             (
@@ -562,6 +574,9 @@ class DecisionOrderExecutor:
                 f"hour_ct={snapshot.hour_start_ct} | "
                 f"bar_index={snapshot.current_bar_index} | "
                 f"qty={self.quantity} | "
+                f"forecast_n={forecast_candidate_count} | "
+                f"similarity_total={len(snapshot.ranked_similarity_candidates)} | "
+                f"best_similarity={best_similarity_text} | "
                 f"avg_fill_price={placement.avg_fill_price}"
             ),
             to_telegram=True,
