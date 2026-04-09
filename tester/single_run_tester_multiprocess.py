@@ -604,9 +604,9 @@ if __name__ == "__main__":
     # Один объект параметров на весь прогон
     strategy_params_for_run = replace(
         DEFAULT_STRATEGY_PARAMS,
-        pearson_shortlist_min_correlation=0.80,
-        pearson_shortlist_top_n=30,
-        forecast_top_n_after_similarity=5,
+        pearson_shortlist_min_correlation=0.70,
+        pearson_shortlist_top_n=50,
+        forecast_top_n_after_similarity=10,
         decision_min_last_similarity_score=0.3,
         similarity_weight_range_position=0.0,
         similarity_weight_diff_pearson=0.0,
