@@ -23,6 +23,8 @@ from tester.prepared_candidates_loader import (
     load_prepared_candidate_hours,
 )
 
+COMMISSION_PER_SIDE_USD = 0.62
+
 
 def floor_to_hour_ts(ts: int) -> int:
     return (ts // 3600) * 3600
@@ -97,7 +99,7 @@ def iter_hour_start_ts_range(start_ts: int, end_ts: int):
         current_hour_start_ts += 3600
 
 
-def build_summary_row(
+def build_base_summary_row(
         current_hour,
         row,
         current_bar_count: int,
@@ -134,23 +136,59 @@ def build_summary_row(
         "negative_ratio": diagnostics["negative_ratio"],
         "mean_max_upside": diagnostics["mean_max_upside"],
         "mean_max_drawdown": diagnostics["mean_max_drawdown"],
+        "trade_opened": False,
+        "trade_side": None,
+        "entry_time": None,
+        "exit_time": None,
+        "entry_price": None,
+        "exit_price": None,
+        "net_pnl": None,
     }
 
 
-def pick_hour_output_row(hour_rows: list[dict]) -> dict:
-    """
-    Для CSV по часу храним только одну строку:
-    - если был LONG/SHORT, берём первый trade-сигнал часа;
-    - иначе берём последнюю строку часа как финальное состояние.
-    """
-    if not hour_rows:
-        raise ValueError("hour_rows is empty")
+def apply_trade_to_row(
+        summary_row: dict,
+        current_hour_rows,
+        side: str,
+        signal_bar_index: int,
+        multiplier: float,
+) -> dict:
+    entry_exec_index = signal_bar_index + 1
+    exit_exec_index = len(current_hour_rows) - 1
 
-    for row in hour_rows:
-        if row["decision"] in {"LONG", "SHORT"}:
-            return row
+    if entry_exec_index >= len(current_hour_rows):
+        summary_row["decision"] = "NO_TRADE"
+        summary_row["reason"] = "ENTRY_NEXT_BAR_NOT_AVAILABLE"
+        return summary_row
 
-    return hour_rows[-1]
+    if exit_exec_index <= entry_exec_index:
+        summary_row["decision"] = "NO_TRADE"
+        summary_row["reason"] = "EXIT_BAR_NOT_AVAILABLE"
+        return summary_row
+
+    entry_row = current_hour_rows[entry_exec_index]
+    exit_row = current_hour_rows[exit_exec_index]
+
+    if side == "LONG":
+        entry_price = entry_row["ask_open"]
+        exit_price = exit_row["bid_open"]
+        net_pnl = (exit_price - entry_price) * multiplier - (COMMISSION_PER_SIDE_USD * 2.0)
+    elif side == "SHORT":
+        entry_price = entry_row["bid_open"]
+        exit_price = exit_row["ask_open"]
+        net_pnl = (entry_price - exit_price) * multiplier - (COMMISSION_PER_SIDE_USD * 2.0)
+    else:
+        raise ValueError(f"Unsupported side: {side}")
+
+    summary_row["trade_opened"] = True
+    summary_row["trade_side"] = side
+    summary_row["entry_time"] = entry_row["bar_time"]
+    summary_row["exit_time"] = exit_row["bar_time"]
+    summary_row["entry_price"] = entry_price
+    summary_row["exit_price"] = exit_price
+    summary_row["net_pnl"] = net_pnl
+
+    return summary_row
 
 
 def save_hour_summary_to_csv(
@@ -185,6 +223,13 @@ def save_hour_summary_to_csv(
         "negative_ratio",
         "mean_max_upside",
         "mean_max_drawdown",
+        "trade_opened",
+        "trade_side",
+        "entry_time",
+        "exit_time",
+        "entry_price",
+        "exit_price",
+        "net_pnl",
     ]
 
     with output_path.open("w", encoding="utf-8-sig", newline="") as f:
@@ -200,10 +245,12 @@ def run_hour_pipeline(
         prepared_candidate_hours,
         current_hour_start_ts: int,
         strategy_params,
-) -> list[dict]:
+        multiplier: float,
+) -> tuple[dict, int]:
     """
-    Возвращает только компактные summary-строки по окну оценки.
-    Никаких snapshots целиком в памяти не держим.
+    Возвращает только одну итоговую строку по часу.
+    Если сигнал найден, сразу считаем сделку и выходим из часа.
+    Если сигнал не найден, возвращаем последнюю строку окна входа.
     """
     if not current_hour_rows:
         raise ValueError("current_hour_rows is empty")
@@ -222,9 +269,22 @@ def run_hour_pipeline(
     start_bar_count = strategy_params.pearson_eval_start_bar_count()
     end_bar_count_exclusive = strategy_params.pearson_eval_end_bar_count_exclusive()
 
-    hour_rows = []
+    start_eval_index = max(start_bar_count - 1, 0)
 
-    for row in current_hour_rows:
+    # Быстро "догоняем" текущее состояние часа до начала окна входа,
+    # не делая лишних проверок decision на первых 30 минутах.
+    for row in current_hour_rows[:start_eval_index]:
+        current_hour.add_bar(
+            ask_open=row["ask_open"],
+            bid_open=row["bid_open"],
+            ask_close=row["ask_close"],
+            bid_close=row["bid_close"],
+        )
+
+    last_summary_row = None
+    evaluated_rows_count = 0
+
+    for row in current_hour_rows[start_eval_index:]:
         current_hour.add_bar(
             ask_open=row["ask_open"],
             bid_open=row["bid_open"],
@@ -283,20 +343,66 @@ def run_hour_pipeline(
             params=strategy_params,
         )
 
-        hour_rows.append(
-            build_summary_row(
-                current_hour=current_hour,
-                row=row,
-                current_bar_count=current_bar_count,
-                current_bar_index=current_bar_index,
-                pearson_ranked_candidates=pearson_ranked_candidates,
-                similarity_ranked_candidates=similarity_ranked_candidates,
-                forecast_summary=forecast_summary,
-                decision_result=decision_result,
-            )
+        summary_row = build_base_summary_row(
+            current_hour=current_hour,
+            row=row,
+            current_bar_count=current_bar_count,
+            current_bar_index=current_bar_index,
+            pearson_ranked_candidates=pearson_ranked_candidates,
+            similarity_ranked_candidates=similarity_ranked_candidates,
+            forecast_summary=forecast_summary,
+            decision_result=decision_result,
         )
 
-    return hour_rows
+        evaluated_rows_count += 1
+        last_summary_row = summary_row
+
+        if summary_row["decision"] in {"LONG", "SHORT"}:
+            summary_row = apply_trade_to_row(
+                summary_row=summary_row,
+                current_hour_rows=current_hour_rows,
+                side=summary_row["decision"],
+                signal_bar_index=current_bar_index,
+                multiplier=multiplier,
+            )
+            return summary_row, evaluated_rows_count
+
+    if last_summary_row is not None:
+        return last_summary_row, evaluated_rows_count
+
+    return {
+        "hour_start_ts": current_hour_start_ts,
+        "hour_start_ts_ct": current_hour_start_ts_ct,
+        "hour_start": current_hour.hour_start,
+        "hour_start_ct": current_hour.hour_start_ct,
+        "hour_slot_ct": current_hour.hour_slot_ct,
+        "last_bar_time_ts": None,
+        "last_bar_time": None,
+        "last_bar_time_ts_ct": None,
+        "last_bar_time_ct": None,
+        "current_bar_index": None,
+        "current_bar_count": None,
+        "pearson_ranked_count": None,
+        "similarity_ranked_count": None,
+        "forecast_candidate_count": None,
+        "decision": "NO_TRADE",
+        "reason": "NO_EVAL_WINDOW",
+        "best_similarity_score": None,
+        "last_similarity_score": None,
+        "mean_final_move": None,
+        "median_final_move": None,
+        "positive_ratio": None,
+        "negative_ratio": None,
+        "mean_max_upside": None,
+        "mean_max_drawdown": None,
+        "trade_opened": False,
+        "trade_side": None,
+        "entry_time": None,
+        "exit_time": None,
+        "entry_price": None,
+        "exit_price": None,
+        "net_pnl": None,
+    }, evaluated_rows_count
 
 
 def run_single_tester(
@@ -306,6 +412,7 @@ def run_single_tester(
         strategy_params,
         price_db_path: str | Path,
         prepared_db_path: str | Path,
+        multiplier: float,
         progress_every_hours: int = 1,
 ):
     start_ts = utc_datetime_to_ts(start_utc)
@@ -320,13 +427,12 @@ def run_single_tester(
         bar_size_setting=instrument_row["barSizeSetting"],
     )
 
-    hours_total_in_range = 0
+    all_hour_starts = list(iter_hour_start_ts_range(start_ts, end_ts))
+    hours_total_in_range = len(all_hour_starts)
+
     hour_summary_rows = []
     skipped_hours = []
     total_snapshot_count = 0
-
-    all_hour_starts = list(iter_hour_start_ts_range(start_ts, end_ts))
-    hours_total_in_range = len(all_hour_starts)
 
     run_started_perf = time.perf_counter()
 
@@ -352,45 +458,16 @@ def run_single_tester(
                     strategy_params=strategy_params,
                 )
 
-                hour_rows = run_hour_pipeline(
+                hour_result_row, evaluated_rows_count = run_hour_pipeline(
                     current_hour_rows=current_hour_rows,
                     prepared_candidate_hours=prepared_candidate_hours,
                     current_hour_start_ts=hour_start_ts,
                     strategy_params=strategy_params,
+                    multiplier=multiplier,
                 )
 
-                if hour_rows:
-                    total_snapshot_count += len(hour_rows)
-                    hour_summary_rows.append(pick_hour_output_row(hour_rows))
-                else:
-                    hour_summary_rows.append(
-                        {
-                            "hour_start_ts": hour_start_ts,
-                            "hour_start_ts_ct": None,
-                            "hour_start": utc_ts_to_text(hour_start_ts),
-                            "hour_start_ct": None,
-                            "hour_slot_ct": None,
-                            "last_bar_time_ts": None,
-                            "last_bar_time": None,
-                            "last_bar_time_ts_ct": None,
-                            "last_bar_time_ct": None,
-                            "current_bar_index": None,
-                            "current_bar_count": None,
-                            "pearson_ranked_count": None,
-                            "similarity_ranked_count": None,
-                            "forecast_candidate_count": None,
-                            "decision": "NO_TRADE",
-                            "reason": "NO_EVAL_WINDOW",
-                            "best_similarity_score": None,
-                            "last_similarity_score": None,
-                            "mean_final_move": None,
-                            "median_final_move": None,
-                            "positive_ratio": None,
-                            "negative_ratio": None,
-                            "mean_max_upside": None,
-                            "mean_max_drawdown": None,
-                        }
-                    )
+                total_snapshot_count += evaluated_rows_count
+                hour_summary_rows.append(hour_result_row)
 
             except Exception as exc:
                 skipped_hours.append(
@@ -417,6 +494,15 @@ def run_single_tester(
         decision_counter = Counter(row["decision"] for row in hour_summary_rows)
         reason_counter = Counter(row["reason"] for row in hour_summary_rows)
 
+        trade_rows = [row for row in hour_summary_rows if row["trade_opened"]]
+        long_count = sum(1 for row in trade_rows if row["trade_side"] == "LONG")
+        short_count = sum(1 for row in trade_rows if row["trade_side"] == "SHORT")
+        win_count = sum(1 for row in trade_rows if row["net_pnl"] is not None and row["net_pnl"] > 0)
+        loss_count = sum(1 for row in trade_rows if row["net_pnl"] is not None and row["net_pnl"] < 0)
+        flat_count = sum(1 for row in trade_rows if row["net_pnl"] is not None and row["net_pnl"] == 0)
+        net_pnl_total = sum(row["net_pnl"] for row in trade_rows if row["net_pnl"] is not None)
+        avg_trade_net_pnl = (net_pnl_total / len(trade_rows)) if trade_rows else 0.0
+
         elapsed_seconds = time.perf_counter() - run_started_perf
 
         result = {
@@ -427,6 +513,8 @@ def run_single_tester(
                 "start_ts": start_ts,
                 "end_ts": end_ts,
                 "strategy_params": asdict(strategy_params),
+                "multiplier": multiplier,
+                "commission_per_side_usd": COMMISSION_PER_SIDE_USD,
             },
             "summary": {
                 "hours_total_in_range": hours_total_in_range,
@@ -435,6 +523,14 @@ def run_single_tester(
                 "total_snapshot_count": total_snapshot_count,
                 "hour_decision_counts": dict(decision_counter),
                 "hour_reason_counts": dict(reason_counter),
+                "trades_count": len(trade_rows),
+                "long_count": long_count,
+                "short_count": short_count,
+                "win_count": win_count,
+                "loss_count": loss_count,
+                "flat_count": flat_count,
+                "net_pnl_total": net_pnl_total,
+                "avg_trade_net_pnl": avg_trade_net_pnl,
                 "elapsed_seconds": elapsed_seconds,
                 "elapsed_hms": format_elapsed(elapsed_seconds),
             },
@@ -457,6 +553,9 @@ if __name__ == "__main__":
     # UTC input range
     start_utc = "2026-04-07 00:00:00"
     end_utc = "2026-04-08 09:00:00"
+
+    instrument_row = Instrument[instrument_code]
+    multiplier = float(instrument_row["multiplier"])
 
     # Один объект параметров на весь прогон
     strategy_params_for_run = replace(
@@ -501,6 +600,7 @@ if __name__ == "__main__":
         strategy_params=strategy_params_for_run,
         price_db_path=price_db_path,
         prepared_db_path=prepared_db_path,
+        multiplier=multiplier,
         progress_every_hours=1,
     )
 
@@ -522,6 +622,15 @@ if __name__ == "__main__":
     print(f"hours_processed = {summary['hours_processed']}")
     print(f"hours_skipped = {summary['hours_skipped']}")
     print(f"total_snapshot_count = {summary['total_snapshot_count']}")
+    print(f"trades_count = {summary['trades_count']}")
+    print(f"long_count = {summary['long_count']}")
+    print(f"short_count = {summary['short_count']}")
+    print(f"win_count = {summary['win_count']}")
+    print(f"loss_count = {summary['loss_count']}")
+    print(f"flat_count = {summary['flat_count']}")
+    print(f"net_pnl_total = {summary['net_pnl_total']:.2f}")
+    print(f"avg_trade_net_pnl = {summary['avg_trade_net_pnl']:.2f}")
+
     print("hour_decision_counts =")
     for key, value in summary["hour_decision_counts"].items():
         print(f"  {key}: {value}")
