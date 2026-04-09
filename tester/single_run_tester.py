@@ -1,4 +1,5 @@
 import csv
+import time
 from collections import Counter
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
@@ -42,6 +43,14 @@ def utc_datetime_to_ts(dt_str: str) -> int:
 
 def utc_ts_to_text(ts: int) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_elapsed(seconds: float) -> str:
+    total_seconds = int(seconds)
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    secs = total_seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 def build_prepared_hour_map(prepared_candidate_hours: list[dict]) -> dict:
@@ -297,6 +306,7 @@ def run_single_tester(
         strategy_params,
         price_db_path: str | Path,
         prepared_db_path: str | Path,
+        progress_every_hours: int = 1,
 ):
     start_ts = utc_datetime_to_ts(start_utc)
     end_ts = utc_datetime_to_ts(end_utc)
@@ -315,13 +325,16 @@ def run_single_tester(
     skipped_hours = []
     total_snapshot_count = 0
 
+    all_hour_starts = list(iter_hour_start_ts_range(start_ts, end_ts))
+    hours_total_in_range = len(all_hour_starts)
+
+    run_started_perf = time.perf_counter()
+
     price_conn = open_price_connection(price_db_path)
     prepared_conn = open_prepared_connection(prepared_db_path)
 
     try:
-        for hour_start_ts in iter_hour_start_ts_range(start_ts, end_ts):
-            hours_total_in_range += 1
-
+        for idx, hour_start_ts in enumerate(all_hour_starts, start=1):
             try:
                 current_hour_rows = load_current_hour_price_rows(
                     price_conn=price_conn,
@@ -388,8 +401,23 @@ def run_single_tester(
                     }
                 )
 
+            if (
+                    idx == 1
+                    or idx == hours_total_in_range
+                    or idx % max(progress_every_hours, 1) == 0
+            ):
+                elapsed = time.perf_counter() - run_started_perf
+                percent = (idx / hours_total_in_range) * 100 if hours_total_in_range else 100.0
+                print(
+                    f"[progress] {idx}/{hours_total_in_range} hours "
+                    f"({percent:.1f}%) | current_hour={utc_ts_to_text(hour_start_ts)} "
+                    f"| elapsed={format_elapsed(elapsed)}"
+                )
+
         decision_counter = Counter(row["decision"] for row in hour_summary_rows)
         reason_counter = Counter(row["reason"] for row in hour_summary_rows)
+
+        elapsed_seconds = time.perf_counter() - run_started_perf
 
         result = {
             "input": {
@@ -407,6 +435,8 @@ def run_single_tester(
                 "total_snapshot_count": total_snapshot_count,
                 "hour_decision_counts": dict(decision_counter),
                 "hour_reason_counts": dict(reason_counter),
+                "elapsed_seconds": elapsed_seconds,
+                "elapsed_hms": format_elapsed(elapsed_seconds),
             },
             "skipped_hours": skipped_hours,
         }
@@ -419,6 +449,9 @@ def run_single_tester(
 
 
 if __name__ == "__main__":
+    tester_started_at = datetime.now().astimezone()
+    tester_started_perf = time.perf_counter()
+
     instrument_code = "MNQ"
 
     # UTC input range
@@ -453,6 +486,14 @@ if __name__ == "__main__":
 
     output_csv_path = f"output/csv/{output_base_name}.csv"
 
+    print(f"tester_start_local = {tester_started_at.strftime('%Y-%m-%d %H:%M:%S %z')}")
+    print(f"instrument_code = {instrument_code}")
+    print(f"start_utc = {start_utc}")
+    print(f"end_utc = {end_utc}")
+    print(f"run_name = {run_name}")
+    print(f"output_csv_path = {output_csv_path}")
+    print("tester_status = started")
+
     result, hour_summary_rows = run_single_tester(
         instrument_code=instrument_code,
         start_utc=start_utc,
@@ -460,6 +501,7 @@ if __name__ == "__main__":
         strategy_params=strategy_params_for_run,
         price_db_path=price_db_path,
         prepared_db_path=prepared_db_path,
+        progress_every_hours=1,
     )
 
     save_hour_summary_to_csv(
@@ -467,13 +509,15 @@ if __name__ == "__main__":
         output_csv_path=output_csv_path,
     )
 
+    tester_finished_at = datetime.now().astimezone()
+    tester_elapsed_seconds = time.perf_counter() - tester_started_perf
+
     summary = result["summary"]
 
     print(f"saved csv: {output_csv_path}")
-    print(f"instrument_code = {instrument_code}")
-    print(f"start_utc = {start_utc}")
-    print(f"end_utc = {end_utc}")
-    print(f"run_name = {run_name}")
+    print(f"tester_finish_local = {tester_finished_at.strftime('%Y-%m-%d %H:%M:%S %z')}")
+    print(f"tester_elapsed_seconds = {tester_elapsed_seconds:.3f}")
+    print(f"tester_elapsed_hms = {format_elapsed(tester_elapsed_seconds)}")
     print(f"hours_total_in_range = {summary['hours_total_in_range']}")
     print(f"hours_processed = {summary['hours_processed']}")
     print(f"hours_skipped = {summary['hours_skipped']}")
@@ -495,3 +539,5 @@ if __name__ == "__main__":
         first_skipped = result["skipped_hours"][0]
         print(f"  hour_start = {first_skipped['hour_start']}")
         print(f"  error = {first_skipped['error']}")
+
+    print("tester_status = finished")
