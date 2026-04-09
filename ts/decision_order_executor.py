@@ -565,6 +565,18 @@ class DecisionOrderExecutor:
         if best_similarity_score is not None:
             best_similarity_text = f"{best_similarity_score:.4f}"
 
+        best_similarity_score = None
+        if snapshot.ranked_similarity_candidates:
+            best_similarity_score = snapshot.ranked_similarity_candidates[0]["final_score"]
+
+        forecast_candidate_count = 0
+        if snapshot.forecast_summary is not None:
+            forecast_candidate_count = int(snapshot.forecast_summary.get("candidate_count") or 0)
+
+        best_similarity_text = "-"
+        if best_similarity_score is not None:
+            best_similarity_text = f"{best_similarity_score:.4f}"
+
         log_info(
             logger,
             (
