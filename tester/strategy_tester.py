@@ -119,6 +119,54 @@ def build_summary_output_csv_path(output_dir: Path, start_utc: str, end_utc: str
     return output_dir / f"parameter_sweep_summary_{start_part}_{end_part}.csv"
 
 
+def parse_summary_csv_value(value: str):
+    if value == "":
+        return value
+
+    if value == "True":
+        return True
+
+    if value == "False":
+        return False
+
+    try:
+        if "." not in value and "e" not in value.lower():
+            return int(value)
+    except ValueError:
+        pass
+
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
+def load_existing_summary_rows(summary_csv_path: str | Path) -> list[dict]:
+    summary_path = Path(summary_csv_path)
+    if not summary_path.exists():
+        return []
+
+    with summary_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        rows = []
+        for row in reader:
+            parsed_row = {
+                key: parse_summary_csv_value(value)
+                for key, value in row.items()
+            }
+            rows.append(parsed_row)
+
+    return rows
+
+
+def get_resume_start_run_index(summary_rows: list[dict]) -> int:
+    if not summary_rows:
+        return 1
+
+    last_completed_run_index = max(int(row["run_index"]) for row in summary_rows)
+    return last_completed_run_index + 1
+
+
 def build_prepared_hour_map(prepared_candidate_hours: list[dict]) -> dict:
     result = {}
     for item in prepared_candidate_hours:
@@ -701,6 +749,7 @@ def run_parameter_sweep(
         max_workers: int,
         chunk_size: int,
         output_dir: str | Path,
+        resume_from_existing: bool = False,
 ):
     sweep_started_at = datetime.now().astimezone()
     sweep_started_perf = time.perf_counter()
@@ -715,6 +764,13 @@ def run_parameter_sweep(
     param_grid = build_param_grid(param_specs)
     total_runs = len(param_grid)
 
+    if resume_from_existing:
+        summary_rows = load_existing_summary_rows(output_summary_csv_path)
+        start_run_index = get_resume_start_run_index(summary_rows)
+    else:
+        summary_rows = []
+        start_run_index = 1
+
     print(f"sweep_start_local = {sweep_started_at.strftime('%Y-%m-%d %H:%M:%S %z')}")
     print(f"instrument_code = {instrument_code}")
     print(f"start_utc = {start_utc}")
@@ -722,6 +778,7 @@ def run_parameter_sweep(
     print(f"max_workers = {max_workers}")
     print(f"chunk_size = {chunk_size}")
     print(f"summary_csv = {output_summary_csv_path}")
+    print(f"resume_from_existing = {resume_from_existing}")
     print("param_specs =")
     if param_specs:
         for param_name, values in param_specs.items():
@@ -729,12 +786,28 @@ def run_parameter_sweep(
     else:
         print("  {} -> будет один прогон на DEFAULT_STRATEGY_PARAMS")
     print(f"total_runs = {total_runs}")
+
+    if resume_from_existing:
+        if summary_rows:
+            print(f"resume_last_completed_run_index = {start_run_index - 1}")
+            print(f"resume_next_run_index = {start_run_index}")
+        else:
+            print("resume_last_completed_run_index = 0")
+            print("resume_next_run_index = 1")
+
+    if start_run_index > total_runs:
+        print("sweep_status = already_finished")
+        print("Все прогоны уже есть в summary-файле.")
+        return summary_rows
+
     print("sweep_status = started")
 
-    summary_rows = []
-
     for combo_index, combo_params in enumerate(param_grid, start=1):
+        if combo_index < start_run_index:
+            continue
+
         run_started_perf = time.perf_counter()
+
         strategy_params_for_run = replace(DEFAULT_STRATEGY_PARAMS, **combo_params)
 
         output_csv_path = build_run_output_csv_path(
@@ -788,6 +861,7 @@ def run_parameter_sweep(
             "net_pnl_total": round(summary["net_pnl_total"], 2),
             "avg_trade_net_pnl": summary["avg_trade_net_pnl"],
         }
+
         summary_row.update(strategy_params_dict)
         summary_rows.append(summary_row)
 
@@ -835,8 +909,14 @@ if __name__ == "__main__":
 
     # Как запустить дефолтные настройки:
     # 1) оставь PARAM_SPECS = {}
-    # 2) запусти файл командой:
+    # 2) оставь RESUME_FROM_EXISTING = False
+    # 3) запусти файл командой:
     #    python tester/strategy_tester.py
+    #
+    # Если хочешь продолжить после сбоя:
+    # 1) не удаляй summary-файл
+    # 2) поставь RESUME_FROM_EXISTING = True
+    # 3) запусти файл снова
     #
     # Если хочешь перебор, просто добавляй сюда списки значений.
     PARAM_SPECS = {
@@ -855,6 +935,8 @@ if __name__ == "__main__":
         "similarity_weight_diff_sign_match": [0.0, 1.0, 2.0, 4.0],
         # "decision_use_adverse_move_filter": [False, True],
     }
+
+    RESUME_FROM_EXISTING = True
 
     cpu_count = os.cpu_count() or 1
     max_workers = min(28, cpu_count)
@@ -876,4 +958,5 @@ if __name__ == "__main__":
         max_workers=max_workers,
         chunk_size=chunk_size,
         output_dir=output_dir,
+        resume_from_existing=RESUME_FROM_EXISTING,
     )
