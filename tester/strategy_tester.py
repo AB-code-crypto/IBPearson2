@@ -925,18 +925,18 @@ if __name__ == "__main__":
         "forecast_top_n_after_similarity": [10],
         "decision_min_last_similarity_score": [0.20],
 
-        "similarity_weight_pearson": [0.0, 1.0, 2.0, 4.0],
-        "similarity_weight_range": [0.0, 1.0, 2.0, 4.0],
-        "similarity_weight_net_move": [0.0, 1.0, 2.0, 4.0],
-        "similarity_weight_range_position": [0.0, 1.0, 2.0, 4.0],
-        "similarity_weight_mean_abs_diff": [0.0, 1.0, 2.0, 4.0],
-        "similarity_weight_efficiency": [0.0, 1.0, 2.0, 4.0],
-        "similarity_weight_diff_pearson": [0.0, 1.0, 2.0, 4.0],
-        "similarity_weight_diff_sign_match": [0.0, 1.0, 2.0, 4.0],
+        "similarity_weight_pearson": [1.0, 2.0],
+        "similarity_weight_range": [1.0, 2.0],
+        "similarity_weight_net_move": [1.0, 2.0],
+        "similarity_weight_range_position": [1.0, 2.0],
+        "similarity_weight_mean_abs_diff": [1.0, 2.0],
+        "similarity_weight_efficiency": [1.0, 2.0],
+        "similarity_weight_diff_pearson": [1.0, 2.0],
+        "similarity_weight_diff_sign_match": [1.0, 2.0],
         # "decision_use_adverse_move_filter": [False, True],
     }
 
-    RESUME_FROM_EXISTING = True
+    RESUME_FROM_EXISTING = False
 
     cpu_count = os.cpu_count() or 1
     max_workers = min(28, cpu_count)
