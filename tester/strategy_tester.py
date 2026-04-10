@@ -827,8 +827,8 @@ if __name__ == "__main__":
     instrument_code = "MNQ"
 
     # UTC input range
-    start_utc = "2026-04-07 00:00:00"
-    end_utc = "2026-04-08 09:00:00"
+    start_utc = "2026-03-01 00:00:00"
+    end_utc = "2026-04-01 00:00:00"
 
     instrument_row = Instrument[instrument_code]
     multiplier = float(instrument_row["multiplier"])
@@ -840,13 +840,19 @@ if __name__ == "__main__":
     #
     # Если хочешь перебор, просто добавляй сюда списки значений.
     PARAM_SPECS = {
-        "pearson_shortlist_min_correlation": [0.70, 0.75, 0.80],
-        "pearson_shortlist_top_n": [30, 50],
-        "forecast_top_n_after_similarity": [5, 7, 10, 15],
-        "decision_min_last_similarity_score": [0.20, 0.30],
-        "similarity_weight_range_position": [0.0, 1.0],
-        "similarity_weight_diff_pearson": [0.0, 1.0],
-        "similarity_weight_diff_sign_match": [0.0, 1.0],
+        "pearson_shortlist_min_correlation": [0.70],
+        "pearson_shortlist_top_n": [50],
+        "forecast_top_n_after_similarity": [10],
+        "decision_min_last_similarity_score": [0.20],
+
+        "similarity_weight_pearson": [0.0, 1.0, 2.0, 4.0],
+        "similarity_weight_range": [0.0, 1.0, 2.0, 4.0],
+        "similarity_weight_net_move": [0.0, 1.0, 2.0, 4.0],
+        "similarity_weight_range_position": [0.0, 1.0, 2.0, 4.0],
+        "similarity_weight_mean_abs_diff": [0.0, 1.0, 2.0, 4.0],
+        "similarity_weight_efficiency": [0.0, 1.0, 2.0, 4.0],
+        "similarity_weight_diff_pearson": [0.0, 1.0, 2.0, 4.0],
+        "similarity_weight_diff_sign_match": [0.0, 1.0, 2.0, 4.0],
         # "decision_use_adverse_move_filter": [False, True],
     }
 
