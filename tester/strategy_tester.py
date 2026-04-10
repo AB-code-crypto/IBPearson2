@@ -925,7 +925,7 @@ if __name__ == "__main__":
         "forecast_top_n_after_similarity": [10],
         "decision_min_last_similarity_score": [0.20],
 
-        "similarity_weight_pearson": [1.0, 2.0],
+        "similarity_weight_pearson": [0.0, 1.0, 2.0, 4.0],
         "similarity_weight_range": [1.0, 2.0],
         "similarity_weight_net_move": [1.0, 2.0],
         "similarity_weight_range_position": [1.0, 2.0],
