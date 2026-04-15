@@ -338,11 +338,11 @@ if __name__ == "__main__":
     price_db_path = settings_live.price_db_path
     prepared_db_path = settings_live.prepared_db_path
 
-    current_hour_start_utc = "2026-04-08 07:00:00"
+    current_hour_start_utc = "2026-04-14 15:00:00"
     current_hour_start_ts = utc_datetime_to_ts(current_hour_start_utc)
 
     pearson_min_correlation = 0.70
-    pearson_top_n = 50
+    pearson_top_n = 30
 
     strategy_params_for_run = replace(
         DEFAULT_STRATEGY_PARAMS,

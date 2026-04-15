@@ -59,7 +59,7 @@ def pearson_eval_end_bar_count_exclusive():
 # similarity score по дополнительным фильтрам.
 
 PEARSON_SHORTLIST_MIN_CORRELATION = 0.70
-PEARSON_SHORTLIST_TOP_N = 50
+PEARSON_SHORTLIST_TOP_N = 30
 
 # ============================================================
 # Настройки второго шага: score похожести кандидатов
@@ -85,14 +85,14 @@ SIMILARITY_DIFF_SIGN_MATCH_SCORE_ONE_AT = 1.00
 # ============================================================
 
 SIMILARITY_WEIGHT_PEARSON = 4.0
-SIMILARITY_WEIGHT_RANGE = 1.0
+SIMILARITY_WEIGHT_RANGE = 2.0
 SIMILARITY_WEIGHT_NET_MOVE = 2.0
 SIMILARITY_WEIGHT_MEAN_ABS_DIFF = 2.0
 SIMILARITY_WEIGHT_EFFICIENCY = 1.0
 
-SIMILARITY_WEIGHT_RANGE_POSITION = 1.0
-SIMILARITY_WEIGHT_DIFF_PEARSON = 2.0
-SIMILARITY_WEIGHT_DIFF_SIGN_MATCH = 2.0
+SIMILARITY_WEIGHT_RANGE_POSITION = 0.0
+SIMILARITY_WEIGHT_DIFF_PEARSON = 0.0
+SIMILARITY_WEIGHT_DIFF_SIGN_MATCH = 0.0
 
 
 def similarity_total_weight():

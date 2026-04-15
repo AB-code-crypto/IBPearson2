@@ -233,13 +233,13 @@ if __name__ == "__main__":
     prepared_db_path = settings_live.prepared_db_path
 
     # Вводим время в удобном UTC-виде
-    current_hour_start_utc = "2026-04-08 07:00:00"
+    current_hour_start_utc = "2026-04-14 15:00:00"
 
     # Внутри проекта дальше используем timestamp
     current_hour_start_ts = utc_datetime_to_ts(current_hour_start_utc)
 
     # Параметры Pearson-shortlist для тестера
-    min_correlation = 0.8
+    min_correlation = 0.5
     top_n = 30
 
     output_base_name = (
