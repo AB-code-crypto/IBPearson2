@@ -215,7 +215,8 @@ async def _shutdown_background_tasks(tasks: dict[str, asyncio.Task]) -> None:
         await _cancel_and_await(tasks.get(task_name))
 
 
-async def _shutdown_app(*, ib, decision_order_executor: Optional[DecisionOrderExecutor], shutdown_message: str, tasks: dict[str, asyncio.Task]) -> None:
+async def _shutdown_app(*, ib, decision_order_executor: Optional[DecisionOrderExecutor], shutdown_message: str,
+                        tasks: dict[str, asyncio.Task]) -> None:
     """Общий shutdown-путь приложения."""
     await _shutdown_background_tasks(tasks)
 

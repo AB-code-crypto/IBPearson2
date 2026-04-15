@@ -105,8 +105,8 @@ INSTRUMENT_CODE = "MNQ"
 
 # Для MANUAL_INTERVAL указываем точный контракт и интервал.
 CONTRACT_LOCAL_SYMBOL = "MNQM6"
-MANUAL_START_UTC = "2026-03-27 22:00:00"
-MANUAL_END_UTC = "2026-03-27 23:00:00"
+MANUAL_START_UTC = "2026-04-13 18:15:00"
+MANUAL_END_UTC = "2026-04-13 19:00:00"
 
 # Для AUTO_REPAIR можно ограничить диапазон поиска.
 # Если None - ищем по всей таблице.
@@ -116,6 +116,7 @@ MANUAL_END_UTC = "2026-03-27 23:00:00"
 #   "YYYY-MM-DD HH:MM:SS"
 #
 # END_UTC_TEXT задаётся как правая граница НЕ включительно.
+# START_UTC_TEXT = "2026-04-13 00:00:00"
 START_UTC_TEXT = None
 END_UTC_TEXT = None
 
@@ -274,7 +275,6 @@ def parse_utc_datetime(text):
     return datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
 
 
-
 def parse_optional_utc_text(value):
     if value is None:
         return None
@@ -291,7 +291,6 @@ def parse_optional_utc_text(value):
     return int(dt.timestamp())
 
 
-
 def format_utc(dt, for_ib=False):
     dt = dt.astimezone(timezone.utc)
 
@@ -301,17 +300,14 @@ def format_utc(dt, for_ib=False):
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-
 def format_utc_ts(timestamp_utc):
     dt = datetime.fromtimestamp(timestamp_utc, tz=timezone.utc)
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-
 def format_ct_ts(timestamp_utc):
     dt = datetime.fromtimestamp(timestamp_utc, tz=timezone.utc)
     return dt.astimezone(CHICAGO_TZ).strftime("%Y-%m-%d %H:%M:%S")
-
 
 
 def build_duration_str(start_dt, end_dt):
@@ -321,7 +317,6 @@ def build_duration_str(start_dt, end_dt):
         raise ValueError("Конец интервала должен быть строго больше начала")
 
     return f"{total_seconds} S"
-
 
 
 def build_table_name(instrument_code, bar_size_setting):
@@ -336,7 +331,6 @@ def build_table_name(instrument_code, bar_size_setting):
         .replace("min", "m")
     )
     return f"{instrument_code}_{suffix}"
-
 
 
 def get_instrument_row(instrument_code):
@@ -359,7 +353,6 @@ def get_instrument_row(instrument_code):
     return instrument_row
 
 
-
 def get_contract_row(instrument_row, contract_local_symbol):
     if "contracts" not in instrument_row:
         raise ValueError("У инструмента нет списка contracts")
@@ -369,7 +362,6 @@ def get_contract_row(instrument_row, contract_local_symbol):
             return contract_row
 
     raise ValueError(f"Контракт не найден в contracts.py: {contract_local_symbol}")
-
 
 
 def build_futures_contract(instrument_code, instrument_row, contract_row):
@@ -384,7 +376,6 @@ def build_futures_contract(instrument_code, instrument_row, contract_row):
         localSymbol=contract_row["localSymbol"],
         lastTradeDateOrContractMonth=contract_row["lastTradeDateOrContractMonth"],
     )
-
 
 
 def build_ct_time_fields_from_utc_dt(dt_utc):
@@ -405,7 +396,6 @@ def build_ct_time_fields_from_utc_dt(dt_utc):
     return bar_time_ts_ct, bar_time_ct
 
 
-
 def ensure_table_exists(conn, table_name):
     sql = "SELECT name FROM sqlite_master WHERE type='table' AND name = ?"
     row = conn.execute(sql, (table_name,)).fetchone()
@@ -414,12 +404,10 @@ def ensure_table_exists(conn, table_name):
         raise ValueError(f"Таблица '{table_name}' не найдена в базе {DB_PATH}")
 
 
-
 def fetch_history_bounds(conn, table_name):
     sql = f"SELECT MIN(bar_time_ts), MAX(bar_time_ts) FROM {table_name}"
     row = conn.execute(sql).fetchone()
     return row[0], row[1]
-
 
 
 def build_bar_time_filters(start_ts, end_ts):
@@ -441,7 +429,6 @@ def build_bar_time_filters(start_ts, end_ts):
     return where_sql, params
 
 
-
 def print_selected_range(start_ts, end_ts):
     if start_ts is None and end_ts is None:
         print("Диапазон поиска: вся доступная история")
@@ -453,7 +440,6 @@ def print_selected_range(start_ts, end_ts):
     print(f"Диапазон поиска UTC: {start_text} -> {end_text} (END не включается)")
 
 
-
 def iter_chunks(start_ts, end_ts_exclusive, chunk_seconds):
     chunk_start = start_ts
 
@@ -461,7 +447,6 @@ def iter_chunks(start_ts, end_ts_exclusive, chunk_seconds):
         chunk_end = min(chunk_start + chunk_seconds, end_ts_exclusive)
         yield chunk_start, chunk_end
         chunk_start = chunk_end
-
 
 
 def validate_price_value(value, field_name, stream_name, contract_name, interval_text, bar_index):
@@ -510,7 +495,6 @@ def fetch_problem_rows(conn, table_name, start_ts=None, end_ts=None):
         """
 
     return conn.execute(sql, tuple(range_params)).fetchall()
-
 
 
 def build_null_intervals(problem_rows):
@@ -563,7 +547,6 @@ def build_null_intervals(problem_rows):
     return intervals
 
 
-
 def fetch_all_bars_for_gap_scan(conn, table_name, start_ts=None, end_ts=None):
     where_sql, params = build_bar_time_filters(start_ts, end_ts)
 
@@ -579,11 +562,9 @@ def fetch_all_bars_for_gap_scan(conn, table_name, start_ts=None, end_ts=None):
     return conn.execute(sql, tuple(params)).fetchall()
 
 
-
 def get_missing_bars_count(gap_start_ts, gap_end_ts):
     missing_seconds = gap_end_ts - gap_start_ts + EXPECTED_STEP_SECONDS
     return missing_seconds // EXPECTED_STEP_SECONDS
-
 
 
 def gap_matches_rule(gap_start_ts, gap_end_ts, rule):
@@ -611,14 +592,12 @@ def gap_matches_rule(gap_start_ts, gap_end_ts, rule):
     return True
 
 
-
 def get_ignored_gap_rule_name(gap_start_ts, gap_end_ts):
     for rule in IGNORED_GAP_RULES:
         if gap_matches_rule(gap_start_ts, gap_end_ts, rule):
             return rule["name"]
 
     return None
-
 
 
 def build_gap_intervals(sorted_rows):
@@ -685,7 +664,6 @@ def build_gap_intervals(sorted_rows):
     return intervals
 
 
-
 def merge_intervals(intervals):
     if not intervals:
         return []
@@ -733,7 +711,6 @@ def merge_intervals(intervals):
     return merged
 
 
-
 def find_repair_intervals(conn, table_name, start_ts=None, end_ts=None):
     problem_rows = fetch_problem_rows(
         conn=conn,
@@ -759,7 +736,6 @@ def find_repair_intervals(conn, table_name, start_ts=None, end_ts=None):
         "gap_intervals": gap_intervals,
         "merged_intervals": merged_intervals,
     }
-
 
 
 def print_intervals(intervals):
@@ -788,13 +764,13 @@ def print_intervals(intervals):
 # ============================================================
 
 async def request_history_once(
-    ib,
-    contract,
-    start_dt,
-    end_dt,
-    bar_size_setting,
-    what_to_show,
-    use_rth,
+        ib,
+        contract,
+        start_dt,
+        end_dt,
+        bar_size_setting,
+        what_to_show,
+        use_rth,
 ):
     return await asyncio.wait_for(
         ib.reqHistoricalDataAsync(
@@ -811,15 +787,14 @@ async def request_history_once(
     )
 
 
-
 async def request_history_with_retries(
-    ib,
-    contract,
-    start_dt,
-    end_dt,
-    bar_size_setting,
-    what_to_show,
-    use_rth,
+        ib,
+        contract,
+        start_dt,
+        end_dt,
+        bar_size_setting,
+        what_to_show,
+        use_rth,
 ):
     last_error = None
 
@@ -850,7 +825,6 @@ async def request_history_with_retries(
                 await asyncio.sleep(HISTORICAL_REQUEST_DELAY_SECONDS)
 
     raise last_error
-
 
 
 def build_quote_rows(bid_bars, ask_bars, contract_name, target_start_dt, target_end_dt):
@@ -888,10 +862,10 @@ def build_quote_rows(bid_bars, ask_bars, contract_name, target_start_dt, target_
                 }
 
             for field_name, value in (
-                ("open", bar.open),
-                ("high", bar.high),
-                ("low", bar.low),
-                ("close", bar.close),
+                    ("open", bar.open),
+                    ("high", bar.high),
+                    ("low", bar.low),
+                    ("close", bar.close),
             ):
                 price_error = validate_price_value(
                     value=value,
@@ -943,7 +917,6 @@ def build_quote_rows(bid_bars, ask_bars, contract_name, target_start_dt, target_
     return rows
 
 
-
 def write_quote_rows_to_sqlite(db_path, table_name, rows):
     if not rows:
         return
@@ -964,14 +937,13 @@ def write_quote_rows_to_sqlite(db_path, table_name, rows):
         conn.close()
 
 
-
 async def repair_chunk(
-    ib,
-    contract,
-    table_name,
-    instrument_row,
-    chunk_start_dt,
-    chunk_end_dt,
+        ib,
+        contract,
+        table_name,
+        instrument_row,
+        chunk_start_dt,
+        chunk_end_dt,
 ):
     target_duration_seconds = int((chunk_end_dt - chunk_start_dt).total_seconds())
 
@@ -1021,12 +993,11 @@ async def repair_chunk(
     return len(rows)
 
 
-
 async def repair_interval(
-    ib,
-    table_name,
-    instrument_row,
-    interval,
+        ib,
+        table_name,
+        instrument_row,
+        interval,
 ):
     contract_row = get_contract_row(
         instrument_row=instrument_row,
@@ -1041,9 +1012,9 @@ async def repair_interval(
     total_rows_written = 0
 
     for chunk_start_ts, chunk_end_ts in iter_chunks(
-        interval["start_ts"],
-        interval["end_ts_exclusive"],
-        CHUNK_SECONDS,
+            interval["start_ts"],
+            interval["end_ts_exclusive"],
+            CHUNK_SECONDS,
     ):
         chunk_start_dt = datetime.fromtimestamp(chunk_start_ts, tz=timezone.utc)
         chunk_end_dt = datetime.fromtimestamp(chunk_end_ts, tz=timezone.utc)
@@ -1098,7 +1069,6 @@ def build_manual_intervals():
             "sources": {"MANUAL_INTERVAL"},
         }
     ]
-
 
 
 def build_auto_intervals(conn, table_name):
