@@ -116,7 +116,7 @@ def similarity_total_weight():
 # После similarity ranking берём только лучшие historical-кандидаты
 # и по ним строим сводный прогноз future-path.
 
-FORECAST_TOP_N_AFTER_SIMILARITY = 10
+FORECAST_TOP_N_AFTER_SIMILARITY = 5
 
 # ============================================================
 # Настройки decision layer
@@ -139,19 +139,19 @@ DECISION_MIN_SIMILARITY_CANDIDATES = 5
 DECISION_MIN_FORECAST_CANDIDATES = 5
 
 # Минимальный итоговый similarity-score у лучшего кандидата.
-DECISION_MIN_BEST_SIMILARITY_SCORE = 0.2
+DECISION_MIN_BEST_SIMILARITY_SCORE = 0.3
 
 # Минимальный итоговый similarity-score у последнего кандидата
 # внутри top-N, который реально попадает в forecast и decision.
-DECISION_MIN_LAST_SIMILARITY_SCORE = 0.2
+DECISION_MIN_LAST_SIMILARITY_SCORE = 0.3
 
 # Минимальная доля кандидатов, идущих в одну сторону.
 DECISION_MIN_DIRECTIONAL_RATIO = 0.60
 
 # Минимальное по модулю ожидаемое движение к концу часа.
 # 0.0005 = 0.05%
-DECISION_MIN_MEAN_FINAL_MOVE_ABS = 0.0005
-DECISION_MIN_MEDIAN_FINAL_MOVE_ABS = 0.0005
+DECISION_MIN_MEAN_FINAL_MOVE_ABS = 0.0008
+DECISION_MIN_MEDIAN_FINAL_MOVE_ABS = 0.0008
 
 # Требовать ли, чтобы mean и median указывали в одну сторону.
 DECISION_REQUIRE_MEAN_AND_MEDIAN_SAME_DIRECTION = True

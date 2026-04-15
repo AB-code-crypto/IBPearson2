@@ -87,7 +87,7 @@ from zoneinfo import ZoneInfo
 
 from config import settings_live as settings
 from contracts import Instrument
-from core.db_initializer import build_table_name
+from core.db_initializer import build_table_name, initialize_prepared_database
 from ts.prepared_builder import (
     build_prepared_rows_for_one_hour,
     replace_prepared_hour,
@@ -95,7 +95,6 @@ from ts.prepared_builder import (
 from ts.prepared_reader import load_prepared_hours_by_slots
 from ts.prepared_sync import sync_prepared_hours_for_range
 from ts.ts_time import resolve_allowed_hour_slots
-
 
 # ============================================================
 # НАСТРОЙКИ РАЗОВОГО ЗАПУСКА
@@ -105,7 +104,7 @@ from ts.ts_time import resolve_allowed_hour_slots
 # - "inspect_reader"
 # - "sync_range"
 # - "rebuild_one_hour"
-PREPARED_TOOL_MODE = "inspect_reader"
+PREPARED_TOOL_MODE = "sync_range"
 
 INSTRUMENT_CODE = "MNQ"
 
@@ -150,7 +149,6 @@ def get_instrument_row(instrument_code):
     return Instrument[instrument_code]
 
 
-
 def build_instrument_table_name(instrument_code):
     instrument_row = get_instrument_row(instrument_code)
 
@@ -158,7 +156,6 @@ def build_instrument_table_name(instrument_code):
         instrument_code=instrument_code,
         bar_size_setting=instrument_row["barSizeSetting"],
     )
-
 
 
 def parse_optional_ct_hour_start_text(hour_start_text_ct):
@@ -178,7 +175,6 @@ def parse_optional_ct_hour_start_text(hour_start_text_ct):
     return int(dt.timestamp())
 
 
-
 def parse_optional_utc_hour_start_text(hour_start_text):
     # Преобразуем текст "YYYY-MM-DD HH:MM:SS" в UTC timestamp начала часа.
     # Если передан None, возвращаем None.
@@ -196,7 +192,6 @@ def parse_optional_utc_hour_start_text(hour_start_text):
     return int(dt.timestamp())
 
 
-
 def parse_required_utc_hour_start_text(hour_start_text):
     hour_start_ts = parse_optional_utc_hour_start_text(hour_start_text)
 
@@ -206,17 +201,14 @@ def parse_required_utc_hour_start_text(hour_start_text):
     return hour_start_ts
 
 
-
 def format_utc_hour_start_ts(hour_start_ts):
     return datetime.fromtimestamp(hour_start_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
 
 
 def format_ct_hour_start_ts_from_utc(hour_start_ts):
     dt_utc = datetime.fromtimestamp(hour_start_ts, tz=timezone.utc)
     dt_ct = dt_utc.astimezone(CHICAGO_TZ)
     return dt_ct.strftime("%Y-%m-%d %H:%M:%S")
-
 
 
 def print_range_line(label, hour_start_ts):
@@ -229,7 +221,6 @@ def print_range_line(label, hour_start_ts):
         f"UTC={format_utc_hour_start_ts(hour_start_ts)} | "
         f"CT={format_ct_hour_start_ts_from_utc(hour_start_ts)}"
     )
-
 
 
 def print_prepared_hour_summary(prefix, hour_payload):
@@ -271,6 +262,16 @@ def print_prepared_hour_summary(prefix, hour_payload):
 
 
 # ============================================================
+# ПОДГОТОВКА PREPARED DB
+# ============================================================
+
+
+def ensure_prepared_database_initialized():
+    """Гарантируем, что prepared DB и её таблицы созданы штатной проектной инициализацией."""
+    initialize_prepared_database(settings)
+
+
+# ============================================================
 # РЕЖИМ inspect_reader
 # ============================================================
 
@@ -278,6 +279,8 @@ def print_prepared_hour_summary(prefix, hour_payload):
 def run_inspect_reader_mode():
     instrument_row = get_instrument_row(INSTRUMENT_CODE)
     table_name = build_instrument_table_name(INSTRUMENT_CODE)
+
+    ensure_prepared_database_initialized()
 
     before_hour_start_ts_ct = parse_optional_ct_hour_start_text(BEFORE_HOUR_START_CT_TEXT)
     allowed_hour_slots = resolve_allowed_hour_slots(HOUR_SLOT_CT)
@@ -330,6 +333,8 @@ def run_sync_range_mode():
     start_hour_ts = parse_optional_utc_hour_start_text(SYNC_START_HOUR_TEXT_UTC)
     end_hour_ts = parse_optional_utc_hour_start_text(SYNC_END_HOUR_TEXT_UTC)
 
+    ensure_prepared_database_initialized()
+
     print(f"Режим: sync_range")
     print(f"Инструмент: {INSTRUMENT_CODE}")
     print(f"price DB: {settings.price_db_path}")
@@ -363,6 +368,8 @@ def run_sync_range_mode():
 def run_rebuild_one_hour_mode():
     instrument_row = get_instrument_row(INSTRUMENT_CODE)
     table_name = build_instrument_table_name(INSTRUMENT_CODE)
+
+    ensure_prepared_database_initialized()
 
     hour_start_ts = parse_required_utc_hour_start_text(REBUILD_HOUR_START_TEXT_UTC)
     hour_start_ct = format_ct_hour_start_ts_from_utc(hour_start_ts)

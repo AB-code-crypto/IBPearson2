@@ -901,7 +901,7 @@ if __name__ == "__main__":
     instrument_code = "MNQ"
 
     # UTC input range
-    start_utc = "2026-03-01 00:00:00"
+    start_utc = "2025-04-01 00:00:00"
     end_utc = "2026-04-01 00:00:00"
 
     instrument_row = Instrument[instrument_code]
@@ -920,26 +920,34 @@ if __name__ == "__main__":
     #
     # Если хочешь перебор, просто добавляй сюда списки значений.
     PARAM_SPECS = {
-        "pearson_shortlist_min_correlation": [0.70],
-        "pearson_shortlist_top_n": [50],
-        "forecast_top_n_after_similarity": [10],
-        "decision_min_last_similarity_score": [0.20],
+        "pearson_shortlist_min_correlation": [0.70, 0.80],
+        "pearson_shortlist_top_n": [30],
+        "forecast_top_n_after_similarity": [5],
+        "decision_min_best_similarity_score": [0.3],
+        "decision_min_last_similarity_score": [0.2, 0.3],
 
-        "similarity_weight_pearson": [0.0, 1.0, 2.0, 4.0],
-        "similarity_weight_range": [1.0, 2.0],
-        "similarity_weight_net_move": [1.0, 2.0],
-        "similarity_weight_range_position": [1.0, 2.0],
-        "similarity_weight_mean_abs_diff": [1.0, 2.0],
-        "similarity_weight_efficiency": [1.0, 2.0],
-        "similarity_weight_diff_pearson": [1.0, 2.0],
-        "similarity_weight_diff_sign_match": [1.0, 2.0],
+        "similarity_weight_pearson": [4.0],  # 4
+        "similarity_weight_range": [1.0],  # 2
+        "similarity_weight_net_move": [2.0],  # 2
+        "similarity_weight_range_position": [1.0],  # 0
+        "similarity_weight_mean_abs_diff": [2.0],  # 2
+
+        "similarity_weight_efficiency": [1.0],  # 1
+        "similarity_weight_diff_pearson": [2.0],  # 0
+        "similarity_weight_diff_sign_match": [2.0],  # 0
+
+        # "decision_min_mean_final_move_abs": [0.0005],  # 0
+        "decision_min_median_final_move_abs": [0.0005, 0.0008],  # 0
+
+        # "decision_min_similarity_candidates": [1],
+        # "decision_min_forecast_candidates": [1],
+
         # "decision_use_adverse_move_filter": [False, True],
     }
-
     RESUME_FROM_EXISTING = False
 
     cpu_count = os.cpu_count() or 1
-    max_workers = min(28, cpu_count)
+    max_workers = min(22, cpu_count)
     chunk_size = 1
 
     price_db_path = settings_live.price_db_path
