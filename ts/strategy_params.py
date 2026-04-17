@@ -40,8 +40,6 @@ class StrategyParams:
     # ============================================================
     # Decision layer
     # ============================================================
-    decision_min_similarity_candidates: int = ts_config.DECISION_MIN_SIMILARITY_CANDIDATES
-    decision_min_forecast_candidates: int = ts_config.DECISION_MIN_FORECAST_CANDIDATES
     decision_min_best_similarity_score: float = ts_config.DECISION_MIN_BEST_SIMILARITY_SCORE
     decision_min_last_similarity_score: float = ts_config.DECISION_MIN_LAST_SIMILARITY_SCORE
     decision_min_directional_ratio: float = ts_config.DECISION_MIN_DIRECTIONAL_RATIO

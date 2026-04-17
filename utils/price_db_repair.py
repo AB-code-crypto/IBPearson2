@@ -99,7 +99,7 @@ REPAIR_MODE = "AUTO_REPAIR"
 # Предохранитель:
 # True  -> только показать, что будет чиниться
 # False -> реально качать из IB и писать в БД
-DRY_RUN = True
+DRY_RUN = False
 
 INSTRUMENT_CODE = "MNQ"
 
@@ -116,8 +116,8 @@ MANUAL_END_UTC = "2026-04-13 19:00:00"
 #   "YYYY-MM-DD HH:MM:SS"
 #
 # END_UTC_TEXT задаётся как правая граница НЕ включительно.
-# START_UTC_TEXT = "2026-04-13 00:00:00"
-START_UTC_TEXT = None
+START_UTC_TEXT = "2026-04-17 00:00:00"
+# START_UTC_TEXT = None
 END_UTC_TEXT = None
 
 # Для 5-секундных данных ожидаем строго такой шаг.

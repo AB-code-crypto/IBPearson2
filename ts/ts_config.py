@@ -107,13 +107,7 @@ FORECAST_TOP_N_AFTER_SIMILARITY = 5
 # - LONG
 # - SHORT
 # - NO_TRADE
-#
-# Это первый и намеренно простой вариант правил.
-# Все границы вынесены сюда, чтобы их можно было спокойно менять
-# без переписывания логики.
 
-DECISION_MIN_SIMILARITY_CANDIDATES = 5
-DECISION_MIN_FORECAST_CANDIDATES = 5
 
 # Минимальный итоговый similarity-score у лучшего кандидата.
 DECISION_MIN_BEST_SIMILARITY_SCORE = 0.3

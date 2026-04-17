@@ -67,9 +67,9 @@ def build_decision_diagnostics(ranked_similarity_candidates, forecast_summary):
 
 
 def evaluate_decision_layer(
-    ranked_similarity_candidates,
-    forecast_summary,
-    params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
+        ranked_similarity_candidates,
+        forecast_summary,
+        params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
 ):
     # Первый простой decision layer.
     #
@@ -88,27 +88,9 @@ def evaluate_decision_layer(
         forecast_summary=forecast_summary,
     )
 
-    if len(ranked_similarity_candidates) < params.decision_min_similarity_candidates:
-        return build_no_trade_result(
-            reason=(
-                f"Недостаточно кандидатов после similarity: "
-                f"{len(ranked_similarity_candidates)} < {params.decision_min_similarity_candidates}"
-            ),
-            diagnostics=diagnostics,
-        )
-
     if forecast_summary is None:
         return build_no_trade_result(
             reason="forecast_summary отсутствует",
-            diagnostics=diagnostics,
-        )
-
-    if forecast_summary["candidate_count"] < params.decision_min_forecast_candidates:
-        return build_no_trade_result(
-            reason=(
-                f"Недостаточно кандидатов в прогнозном слое: "
-                f"{forecast_summary['candidate_count']} < {params.decision_min_forecast_candidates}"
-            ),
             diagnostics=diagnostics,
         )
 
