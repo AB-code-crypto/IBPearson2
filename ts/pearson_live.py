@@ -155,6 +155,22 @@ class PearsonLiveRuntime:
             )
             correlation_calculated = True
 
+            if not self.strategy_params.pearson_has_enough_shortlist_candidates(
+                len(ranked_candidates)
+            ):
+                self.last_snapshot = self._build_snapshot(
+                    correlation_calculated=correlation_calculated,
+                    similarity_calculated=similarity_calculated,
+                    forecast_calculated=forecast_calculated,
+                    decision_calculated=decision_calculated,
+                    ranked_candidates=ranked_candidates,
+                    ranked_similarity_candidates=ranked_similarity_candidates,
+                    forecast_summary=forecast_summary,
+                    decision_result=decision_result,
+                )
+
+                return self.last_snapshot
+
             ranked_similarity_candidates = self._rank_similarity_candidates(
                 ranked_candidates=ranked_candidates,
             )

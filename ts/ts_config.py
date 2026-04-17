@@ -60,6 +60,7 @@ def pearson_eval_end_bar_count_exclusive():
 
 PEARSON_SHORTLIST_MIN_CORRELATION = 0.70
 PEARSON_SHORTLIST_TOP_N = 30
+PEARSON_MIN_SHORTLIST = 5
 
 # ============================================================
 # Настройки второго шага: score похожести кандидатов

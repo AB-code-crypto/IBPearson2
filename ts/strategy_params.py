@@ -21,6 +21,7 @@ class StrategyParams:
 
     pearson_shortlist_min_correlation: float = ts_config.PEARSON_SHORTLIST_MIN_CORRELATION
     pearson_shortlist_top_n: int = ts_config.PEARSON_SHORTLIST_TOP_N
+    pearson_min_shortlist: int = ts_config.PEARSON_MIN_SHORTLIST
 
     # ============================================================
     # Similarity score thresholds
@@ -91,6 +92,9 @@ class StrategyParams:
 
     def pearson_eval_end_bar_count_exclusive(self) -> int:
         return self.pearson_eval_end_minute * self.pearson_bars_per_minute()
+
+    def pearson_has_enough_shortlist_candidates(self, candidate_count: int) -> bool:
+        return candidate_count >= self.pearson_min_shortlist
 
     def resolve_allowed_hour_slots(self, current_hour_slot: int) -> list[int]:
         return list(self.search_slot_groups[current_hour_slot])
