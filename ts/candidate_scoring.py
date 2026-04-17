@@ -1,7 +1,5 @@
 from ts.candidate_features import (
     build_first_diff,
-    calc_diff_pearson,
-    calc_diff_sign_match_ratio,
     calc_mean_abs_diff,
     calc_net_move,
     calc_path_efficiency,
@@ -64,11 +62,6 @@ def evaluate_similarity_between_prefixes(
 
     if pearson is None:
         return None
-
-    diff_pearson = None
-    diff_sign_match_ratio = None
-    diff_pearson_score = 0.0
-    diff_sign_match_score = 0.0
 
     current_range = None
     candidate_range = None
@@ -143,16 +136,6 @@ def evaluate_similarity_between_prefixes(
         )
         efficiency_score = 1.0 - efficiency_distance
 
-    if params.similarity_weight_diff_pearson > 0.0:
-        diff_pearson = calc_diff_pearson(current_values, candidate_values)
-
-        if diff_pearson is not None and diff_pearson > 0.0:
-            diff_pearson_score = diff_pearson
-
-    if params.similarity_weight_diff_sign_match > 0.0:
-        diff_sign_match_ratio = calc_diff_sign_match_ratio(current_values, candidate_values)
-        diff_sign_match_score = diff_sign_match_ratio
-
     pearson_score = pearson
 
     final_score = calc_weighted_average_score(
@@ -163,15 +146,11 @@ def evaluate_similarity_between_prefixes(
             (range_position_score, params.similarity_weight_range_position),
             (mean_abs_diff_score, params.similarity_weight_mean_abs_diff),
             (efficiency_score, params.similarity_weight_efficiency),
-            (diff_pearson_score, params.similarity_weight_diff_pearson),
-            (diff_sign_match_score, params.similarity_weight_diff_sign_match),
         ]
     )
 
     return {
         "pearson": pearson,
-        "diff_pearson": diff_pearson,
-        "diff_sign_match_ratio": diff_sign_match_ratio,
         "current_range": current_range,
         "candidate_range": candidate_range,
         "range_distance": range_distance,
@@ -188,8 +167,6 @@ def evaluate_similarity_between_prefixes(
         "candidate_path_efficiency": candidate_path_efficiency,
         "efficiency_distance": efficiency_distance,
         "pearson_score": pearson_score,
-        "diff_pearson_score": diff_pearson_score,
-        "diff_sign_match_score": diff_sign_match_score,
         "range_score": range_score,
         "net_move_score": net_move_score,
         "range_position_score": range_position_score,

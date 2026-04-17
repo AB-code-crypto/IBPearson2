@@ -36,8 +36,6 @@ class StrategyParams:
     similarity_weight_range_position: float = ts_config.SIMILARITY_WEIGHT_RANGE_POSITION
     similarity_weight_mean_abs_diff: float = ts_config.SIMILARITY_WEIGHT_MEAN_ABS_DIFF
     similarity_weight_efficiency: float = ts_config.SIMILARITY_WEIGHT_EFFICIENCY
-    similarity_weight_diff_pearson: float = ts_config.SIMILARITY_WEIGHT_DIFF_PEARSON
-    similarity_weight_diff_sign_match: float = ts_config.SIMILARITY_WEIGHT_DIFF_SIGN_MATCH
 
     # ============================================================
     # Forecast
