@@ -3,6 +3,7 @@ from ts.candidate_features import (
     calc_mean_abs_diff,
     calc_net_move,
     calc_path_efficiency,
+    calc_path_efficiency_from_parts,
     calc_range,
     calc_range_position,
 )
@@ -67,6 +68,7 @@ def evaluate_similarity_between_prefixes(
     candidate_range = None
     range_distance = None
     range_score = 0.0
+
     if params.similarity_weight_range > 0.0:
         current_range = calc_range(current_values)
         candidate_range = calc_range(candidate_values)
@@ -80,6 +82,7 @@ def evaluate_similarity_between_prefixes(
     candidate_net_move = None
     net_move_distance = None
     net_move_score = 0.0
+
     if params.similarity_weight_net_move > 0.0:
         current_net_move = calc_net_move(current_values)
         candidate_net_move = calc_net_move(candidate_values)
@@ -97,6 +100,7 @@ def evaluate_similarity_between_prefixes(
     candidate_range_position = None
     range_position_distance = None
     range_position_score = 0.0
+
     if params.similarity_weight_range_position > 0.0:
         current_range_position = calc_range_position(current_values)
         candidate_range_position = calc_range_position(candidate_values)
@@ -111,10 +115,23 @@ def evaluate_similarity_between_prefixes(
     mean_abs_diff_distance = None
     mean_abs_diff_score = 0.0
 
-    if params.similarity_weight_mean_abs_diff > 0.0:
+    current_path_efficiency = None
+    candidate_path_efficiency = None
+    efficiency_distance = None
+    efficiency_score = 0.0
+
+    need_diff_values = (
+            params.similarity_weight_mean_abs_diff > 0.0
+            or params.similarity_weight_efficiency > 0.0
+    )
+    current_diff_values = None
+    candidate_diff_values = None
+
+    if need_diff_values:
         current_diff_values = build_first_diff(current_values)
         candidate_diff_values = build_first_diff(candidate_values)
 
+    if params.similarity_weight_mean_abs_diff > 0.0:
         current_mean_abs_diff = calc_mean_abs_diff(current_diff_values)
         candidate_mean_abs_diff = calc_mean_abs_diff(candidate_diff_values)
         mean_abs_diff_distance = calc_relative_distance(
@@ -123,13 +140,21 @@ def evaluate_similarity_between_prefixes(
         )
         mean_abs_diff_score = 1.0 - mean_abs_diff_distance
 
-    current_path_efficiency = None
-    candidate_path_efficiency = None
-    efficiency_distance = None
-    efficiency_score = 0.0
     if params.similarity_weight_efficiency > 0.0:
-        current_path_efficiency = calc_path_efficiency(current_values)
-        candidate_path_efficiency = calc_path_efficiency(candidate_values)
+        if current_net_move is None:
+            current_net_move = calc_net_move(current_values)
+
+        if candidate_net_move is None:
+            candidate_net_move = calc_net_move(candidate_values)
+
+        current_path_efficiency = calc_path_efficiency_from_parts(
+            net_move=current_net_move,
+            diff_values=current_diff_values,
+        )
+        candidate_path_efficiency = calc_path_efficiency_from_parts(
+            net_move=candidate_net_move,
+            diff_values=candidate_diff_values,
+        )
         efficiency_distance = calc_relative_distance(
             current_path_efficiency,
             candidate_path_efficiency,
@@ -184,6 +209,7 @@ def evaluate_prepared_candidate_similarity(
     # Считаем score похожести для одного prepared-кандидата.
     candidate_values = prepared_hour_payload["y"][: len(current_values)]
     pearson = prepared_hour_payload["correlation"]
+
     result = evaluate_similarity_between_prefixes(
         current_values=current_values,
         candidate_values=candidate_values,

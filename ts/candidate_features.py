@@ -84,6 +84,27 @@ def calc_mean_abs_diff(diff_values):
     return abs_sum / len(diff_values)
 
 
+def calc_path_efficiency_from_parts(net_move, diff_values):
+    # Считаем эффективность движения по уже готовым частям:
+    #
+    # abs(net_move) / sum(abs(first_diff))
+    #
+    # Это позволяет не строить первую разность повторно, если она уже
+    # была нужна для других similarity-фильтров.
+    if not diff_values:
+        return 0.0
+
+    abs_path_sum = 0.0
+
+    for value in diff_values:
+        abs_path_sum += abs(value)
+
+    if abs_path_sum == 0.0:
+        return 0.0
+
+    return abs(net_move) / abs_path_sum
+
+
 def calc_path_efficiency(values):
     # Считаем эффективность движения:
     #
@@ -101,15 +122,10 @@ def calc_path_efficiency(values):
     net_move = calc_net_move(values)
     diff_values = build_first_diff(values)
 
-    abs_path_sum = 0.0
-
-    for value in diff_values:
-        abs_path_sum += abs(value)
-
-    if abs_path_sum == 0.0:
-        return 0.0
-
-    return abs(net_move) / abs_path_sum
+    return calc_path_efficiency_from_parts(
+        net_move=net_move,
+        diff_values=diff_values,
+    )
 
 
 def calc_pearson_corr(values_a, values_b):
