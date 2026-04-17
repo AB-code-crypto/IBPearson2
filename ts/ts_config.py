@@ -66,7 +66,6 @@ PEARSON_MIN_SHORTLIST = 5
 # Настройки второго шага: score похожести кандидатов
 # ============================================================
 
-SIMILARITY_EFFICIENCY_DISTANCE_ZERO_AT = 0.50
 
 SIMILARITY_RANGE_POSITION_DISTANCE_ZERO_AT = 0.50
 SIMILARITY_DIFF_PEARSON_SCORE_ZERO_AT = 0.50
@@ -96,8 +95,8 @@ def similarity_total_weight():
             + SIMILARITY_WEIGHT_RANGE
             + SIMILARITY_WEIGHT_NET_MOVE
             + SIMILARITY_WEIGHT_MEAN_ABS_DIFF
-            + SIMILARITY_WEIGHT_RANGE_POSITION
             + SIMILARITY_WEIGHT_EFFICIENCY
+            + SIMILARITY_WEIGHT_RANGE_POSITION
             + SIMILARITY_WEIGHT_DIFF_PEARSON
             + SIMILARITY_WEIGHT_DIFF_SIGN_MATCH
     )

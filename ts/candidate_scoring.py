@@ -160,12 +160,18 @@ def evaluate_similarity_between_prefixes(
         )
         mean_abs_diff_score = 1.0 - mean_abs_diff_distance
 
-    current_path_efficiency = calc_path_efficiency(current_values)
-    candidate_path_efficiency = calc_path_efficiency(candidate_values)
-    efficiency_distance = calc_relative_distance(
-        current_path_efficiency,
-        candidate_path_efficiency,
-    )
+    current_path_efficiency = None
+    candidate_path_efficiency = None
+    efficiency_distance = None
+    efficiency_score = 0.0
+    if params.similarity_weight_efficiency > 0.0:
+        current_path_efficiency = calc_path_efficiency(current_values)
+        candidate_path_efficiency = calc_path_efficiency(candidate_values)
+        efficiency_distance = calc_relative_distance(
+            current_path_efficiency,
+            candidate_path_efficiency,
+        )
+        efficiency_score = 1.0 - efficiency_distance
 
     pearson_score = pearson
     diff_pearson_score = 0.0
@@ -183,10 +189,6 @@ def evaluate_similarity_between_prefixes(
     range_position_score = calc_score_from_distance(
         distance=range_position_distance,
         distance_zero_at=params.similarity_range_position_distance_zero_at,
-    )
-    efficiency_score = calc_score_from_distance(
-        distance=efficiency_distance,
-        distance_zero_at=params.similarity_efficiency_distance_zero_at,
     )
 
     final_score = calc_weighted_average_score(
