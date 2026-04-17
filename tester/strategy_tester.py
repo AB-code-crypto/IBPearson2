@@ -988,21 +988,21 @@ if __name__ == "__main__":
     PARAM_SPECS = {
         "pearson_shortlist_min_correlation": [0.70],
         "pearson_shortlist_top_n": [30],
-        "pearson_min_shortlist": [5],
+        "pearson_min_shortlist": [15],
         "forecast_top_n_after_similarity": [5],
         "decision_min_last_similarity_score": [0.30],
         "decision_min_final_move_points": [10.0],
 
-        "similarity_weight_pearson": [4.0],
-        "similarity_weight_range": [2.0],
-        "similarity_weight_net_move": [2.0],
-        "similarity_weight_mean_abs_diff": [2.0],
-        "similarity_weight_efficiency": [2.0],
+        "similarity_weight_pearson": [1.0, 2.0, 4.0],
+        "similarity_weight_range": [0, 1.0, 2.0],
+        "similarity_weight_net_move": [0, 1.0, 2.0],
+        "similarity_weight_mean_abs_diff": [0, 1.0, 2.0],
+        "similarity_weight_efficiency": [0, 1.0, 2.0],
     }
     RESUME_FROM_EXISTING = False
 
     cpu_count = os.cpu_count() or 1
-    max_workers = min(18, cpu_count)
+    max_workers = min(24, cpu_count)
     chunk_size = 1
 
     price_db_path = settings_live.price_db_path
