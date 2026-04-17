@@ -27,44 +27,6 @@ def calc_absolute_distance(value_a, value_b):
     return abs(value_a - value_b)
 
 
-def calc_score_from_value(value, score_zero_at, score_one_at):
-    # Переводим "чем больше, тем лучше" в score 0..1.
-    #
-    # Логика:
-    # - value <= score_zero_at -> 0
-    # - value >= score_one_at -> 1
-    # - между ними линейная интерполяция
-    if score_one_at <= score_zero_at:
-        raise ValueError("score_one_at должен быть строго больше score_zero_at")
-
-    if value <= score_zero_at:
-        return 0.0
-
-    if value >= score_one_at:
-        return 1.0
-
-    return (value - score_zero_at) / (score_one_at - score_zero_at)
-
-
-def calc_score_from_distance(distance, distance_zero_at):
-    # Переводим "чем меньше, тем лучше" в score 0..1.
-    #
-    # Логика:
-    # - distance <= 0 -> 1
-    # - distance >= distance_zero_at -> 0
-    # - между ними линейная интерполяция
-    if distance_zero_at <= 0.0:
-        raise ValueError("distance_zero_at должен быть > 0")
-
-    if distance <= 0.0:
-        return 1.0
-
-    if distance >= distance_zero_at:
-        return 0.0
-
-    return 1.0 - (distance / distance_zero_at)
-
-
 def calc_weighted_average_score(score_items):
     # Считаем взвешенное среднее.
     #
@@ -103,8 +65,10 @@ def evaluate_similarity_between_prefixes(
     if pearson is None:
         return None
 
-    diff_pearson = calc_diff_pearson(current_values, candidate_values)
-    diff_sign_match_ratio = calc_diff_sign_match_ratio(current_values, candidate_values)
+    diff_pearson = None
+    diff_sign_match_ratio = None
+    diff_pearson_score = 0.0
+    diff_sign_match_score = 0.0
 
     current_range = None
     candidate_range = None
@@ -136,12 +100,18 @@ def evaluate_similarity_between_prefixes(
             )
             net_move_score = 1.0 - net_move_distance
 
-    current_range_position = calc_range_position(current_values)
-    candidate_range_position = calc_range_position(candidate_values)
-    range_position_distance = calc_absolute_distance(
-        current_range_position,
-        candidate_range_position,
-    )
+    current_range_position = None
+    candidate_range_position = None
+    range_position_distance = None
+    range_position_score = 0.0
+    if params.similarity_weight_range_position > 0.0:
+        current_range_position = calc_range_position(current_values)
+        candidate_range_position = calc_range_position(candidate_values)
+        range_position_distance = calc_absolute_distance(
+            current_range_position,
+            candidate_range_position,
+        )
+        range_position_score = 1.0 - range_position_distance
 
     current_mean_abs_diff = None
     candidate_mean_abs_diff = None
@@ -173,23 +143,17 @@ def evaluate_similarity_between_prefixes(
         )
         efficiency_score = 1.0 - efficiency_distance
 
+    if params.similarity_weight_diff_pearson > 0.0:
+        diff_pearson = calc_diff_pearson(current_values, candidate_values)
+
+        if diff_pearson is not None and diff_pearson > 0.0:
+            diff_pearson_score = diff_pearson
+
+    if params.similarity_weight_diff_sign_match > 0.0:
+        diff_sign_match_ratio = calc_diff_sign_match_ratio(current_values, candidate_values)
+        diff_sign_match_score = diff_sign_match_ratio
+
     pearson_score = pearson
-    diff_pearson_score = 0.0
-    if diff_pearson is not None:
-        diff_pearson_score = calc_score_from_value(
-            value=diff_pearson,
-            score_zero_at=params.similarity_diff_pearson_score_zero_at,
-            score_one_at=params.similarity_diff_pearson_score_one_at,
-        )
-    diff_sign_match_score = calc_score_from_value(
-        value=diff_sign_match_ratio,
-        score_zero_at=params.similarity_diff_sign_match_score_zero_at,
-        score_one_at=params.similarity_diff_sign_match_score_one_at,
-    )
-    range_position_score = calc_score_from_distance(
-        distance=range_position_distance,
-        distance_zero_at=params.similarity_range_position_distance_zero_at,
-    )
 
     final_score = calc_weighted_average_score(
         [

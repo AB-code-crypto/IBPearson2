@@ -26,13 +26,6 @@ class StrategyParams:
     # ============================================================
     # Similarity score thresholds
     # ============================================================
-    similarity_range_position_distance_zero_at: float = ts_config.SIMILARITY_RANGE_POSITION_DISTANCE_ZERO_AT
-
-    similarity_diff_pearson_score_zero_at: float = ts_config.SIMILARITY_DIFF_PEARSON_SCORE_ZERO_AT
-    similarity_diff_pearson_score_one_at: float = ts_config.SIMILARITY_DIFF_PEARSON_SCORE_ONE_AT
-
-    similarity_diff_sign_match_score_zero_at: float = ts_config.SIMILARITY_DIFF_SIGN_MATCH_SCORE_ZERO_AT
-    similarity_diff_sign_match_score_one_at: float = ts_config.SIMILARITY_DIFF_SIGN_MATCH_SCORE_ONE_AT
 
     # ============================================================
     # Similarity weights

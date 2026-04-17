@@ -63,18 +63,7 @@ PEARSON_SHORTLIST_TOP_N = 30
 PEARSON_MIN_SHORTLIST = 5
 
 # ============================================================
-# Настройки второго шага: score похожести кандидатов
-# ============================================================
-
-
-SIMILARITY_RANGE_POSITION_DISTANCE_ZERO_AT = 0.50
-SIMILARITY_DIFF_PEARSON_SCORE_ZERO_AT = 0.50
-SIMILARITY_DIFF_PEARSON_SCORE_ONE_AT = 1.00
-SIMILARITY_DIFF_SIGN_MATCH_SCORE_ZERO_AT = 0.50
-SIMILARITY_DIFF_SIGN_MATCH_SCORE_ONE_AT = 1.00
-
-# ============================================================
-# Веса фильтров похожести
+# Веса фильтров
 # ============================================================
 
 SIMILARITY_WEIGHT_PEARSON = 4.0
