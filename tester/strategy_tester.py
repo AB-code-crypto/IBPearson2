@@ -34,17 +34,6 @@ SUMMARY_EXCLUDED_STRATEGY_FIELDS = {
     "pearson_eval_start_minute",
     "pearson_eval_end_minute",
     "search_slot_groups",
-    "similarity_pearson_score_zero_at",
-    "similarity_pearson_score_one_at",
-    "similarity_range_distance_zero_at",
-    "similarity_net_move_distance_zero_at",
-    "similarity_range_position_distance_zero_at",
-    "similarity_mean_abs_diff_distance_zero_at",
-    "similarity_efficiency_distance_zero_at",
-    "similarity_diff_pearson_score_zero_at",
-    "similarity_diff_pearson_score_one_at",
-    "similarity_diff_sign_match_score_zero_at",
-    "similarity_diff_sign_match_score_one_at",
 }
 
 
@@ -175,6 +164,40 @@ def build_prepared_hour_map(prepared_candidate_hours: list[dict]) -> dict:
     return result
 
 
+def build_shortlist_prepared_hours(
+        ranked_candidates: list[dict],
+        prepared_hour_map: dict,
+) -> list[dict]:
+    result = []
+
+    for item in ranked_candidates:
+        key = (item["hour_start_ts"], item["hour_start_ts_ct"])
+        prepared_hour_payload = prepared_hour_map.get(key)
+        if prepared_hour_payload is None:
+            raise ValueError(
+                "Prepared hour for ranked candidate not found: "
+                f"hour_start_ts={item['hour_start_ts']}, "
+                f"hour_start_ts_ct={item['hour_start_ts_ct']}"
+            )
+
+        shortlist_item = dict(prepared_hour_payload)
+        shortlist_item["correlation"] = item["correlation"]
+        result.append(shortlist_item)
+
+    return result
+
+
+def build_current_reference_price(current_hour, current_bar_index: int):
+    if current_hour.mid_open_0 is None:
+        return None
+    if current_bar_index is None:
+        return None
+    if not (0 <= current_bar_index < len(current_hour.x)):
+        return None
+
+    return current_hour.mid_open_0 * (1.0 + current_hour.x[current_bar_index])
+
+
 def pick_prepared_hours_by_ranked_candidates(
         ranked_candidates: list[dict],
         prepared_hour_map: dict,
@@ -219,10 +242,15 @@ def build_base_summary_row(
         current_bar_index: int,
         pearson_ranked_candidates: list[dict],
         similarity_ranked_candidates: list[dict],
-        forecast_summary: dict,
-        decision_result: dict,
+        forecast_summary: dict | None,
+        decision_result: dict | None,
+        pearson_min_shortlist_passed: bool,
+        current_reference_price: float | None,
 ) -> dict:
-    diagnostics = decision_result["diagnostics"]
+    diagnostics = decision_result["diagnostics"] if decision_result is not None else {}
+
+    decision = decision_result["decision"] if decision_result is not None else "NO_TRADE"
+    reason = decision_result["reason"] if decision_result is not None else "PEARSON_MIN_SHORTLIST_NOT_REACHED"
 
     return {
         "hour_start_ts": current_hour.hour_start_ts,
@@ -237,18 +265,25 @@ def build_base_summary_row(
         "current_bar_index": current_bar_index,
         "current_bar_count": current_bar_count,
         "pearson_ranked_count": len(pearson_ranked_candidates),
+        "pearson_min_shortlist_passed": pearson_min_shortlist_passed,
         "similarity_ranked_count": len(similarity_ranked_candidates),
-        "forecast_candidate_count": forecast_summary["candidate_count"],
-        "decision": decision_result["decision"],
-        "reason": decision_result["reason"],
-        "best_similarity_score": diagnostics["best_similarity_score"],
-        "last_similarity_score": diagnostics["last_similarity_score"],
-        "mean_final_move": diagnostics["mean_final_move"],
-        "median_final_move": diagnostics["median_final_move"],
-        "positive_ratio": diagnostics["positive_ratio"],
-        "negative_ratio": diagnostics["negative_ratio"],
-        "mean_max_upside": diagnostics["mean_max_upside"],
-        "mean_max_drawdown": diagnostics["mean_max_drawdown"],
+        "forecast_candidate_count": (
+            forecast_summary["candidate_count"] if forecast_summary is not None else None
+        ),
+        "decision": decision,
+        "reason": reason,
+        "current_reference_price": current_reference_price,
+        "best_similarity_score": diagnostics.get("best_similarity_score"),
+        "last_similarity_score": diagnostics.get("last_similarity_score"),
+        "mean_final_move": diagnostics.get("mean_final_move"),
+        "median_final_move": diagnostics.get("median_final_move"),
+        "mean_final_move_points": diagnostics.get("mean_final_move_points"),
+        "median_final_move_points": diagnostics.get("median_final_move_points"),
+        "min_final_move_points": diagnostics.get("min_final_move_points"),
+        "positive_ratio": diagnostics.get("positive_ratio"),
+        "negative_ratio": diagnostics.get("negative_ratio"),
+        "mean_max_upside": diagnostics.get("mean_max_upside"),
+        "mean_max_drawdown": diagnostics.get("mean_max_drawdown"),
         "trade_opened": False,
         "trade_side": None,
         "entry_time": None,
@@ -320,14 +355,19 @@ def save_hour_summary_to_csv(hour_summary_rows: list[dict], output_csv_path: str
         "current_bar_index",
         "current_bar_count",
         "pearson_ranked_count",
+        "pearson_min_shortlist_passed",
         "similarity_ranked_count",
         "forecast_candidate_count",
         "decision",
         "reason",
+        "current_reference_price",
         "best_similarity_score",
         "last_similarity_score",
         "mean_final_move",
         "median_final_move",
+        "mean_final_move_points",
+        "median_final_move_points",
+        "min_final_move_points",
         "positive_ratio",
         "negative_ratio",
         "mean_max_upside",
@@ -454,37 +494,51 @@ def run_hour_pipeline(
             top_n=strategy_params.pearson_shortlist_top_n,
         )
 
-        pearson_shortlist_prepared_hours = pick_prepared_hours_by_ranked_candidates(
-            ranked_candidates=pearson_ranked_candidates,
-            prepared_hour_map=prepared_hour_map,
-            limit=None,
+        pearson_min_shortlist_passed = strategy_params.pearson_has_enough_shortlist_candidates(
+            len(pearson_ranked_candidates)
         )
 
-        current_values = list(current_hour.x)
-
-        similarity_ranked_candidates = rank_prepared_candidates_by_similarity(
-            current_values=current_values,
-            prepared_hours=pearson_shortlist_prepared_hours,
-            min_required_pearson=None,
-            params=strategy_params,
-        )
-
-        forecast_prepared_hours = pick_prepared_hours_by_ranked_candidates(
-            ranked_candidates=similarity_ranked_candidates,
-            prepared_hour_map=prepared_hour_map,
-            limit=strategy_params.forecast_top_n_after_similarity,
-        )
-
-        forecast_summary = build_group_forecast_from_prepared_candidates(
-            prepared_hours=forecast_prepared_hours,
+        current_reference_price = build_current_reference_price(
+            current_hour=current_hour,
             current_bar_index=current_bar_index,
         )
 
-        decision_result = evaluate_decision_layer(
-            ranked_similarity_candidates=similarity_ranked_candidates,
-            forecast_summary=forecast_summary,
-            params=strategy_params,
-        )
+        similarity_ranked_candidates = []
+        forecast_summary = None
+        decision_result = None
+
+        if pearson_min_shortlist_passed:
+            pearson_shortlist_prepared_hours = build_shortlist_prepared_hours(
+                ranked_candidates=pearson_ranked_candidates,
+                prepared_hour_map=prepared_hour_map,
+            )
+
+            current_values = list(current_hour.x)
+
+            similarity_ranked_candidates = rank_prepared_candidates_by_similarity(
+                current_values=current_values,
+                prepared_hours=pearson_shortlist_prepared_hours,
+                params=strategy_params,
+            )
+
+            forecast_prepared_hours = pick_prepared_hours_by_ranked_candidates(
+                ranked_candidates=similarity_ranked_candidates,
+                prepared_hour_map=prepared_hour_map,
+                limit=strategy_params.forecast_top_n_after_similarity,
+            )
+
+            if forecast_prepared_hours:
+                forecast_summary = build_group_forecast_from_prepared_candidates(
+                    prepared_hours=forecast_prepared_hours,
+                    current_bar_index=current_bar_index,
+                )
+
+            decision_result = evaluate_decision_layer(
+                ranked_similarity_candidates=similarity_ranked_candidates,
+                forecast_summary=forecast_summary,
+                current_reference_price=current_reference_price,
+                params=strategy_params,
+            )
 
         summary_row = build_base_summary_row(
             current_hour=current_hour,
@@ -495,6 +549,8 @@ def run_hour_pipeline(
             similarity_ranked_candidates=similarity_ranked_candidates,
             forecast_summary=forecast_summary,
             decision_result=decision_result,
+            pearson_min_shortlist_passed=pearson_min_shortlist_passed,
+            current_reference_price=current_reference_price,
         )
 
         evaluated_rows_count += 1
@@ -526,14 +582,19 @@ def run_hour_pipeline(
         "current_bar_index": None,
         "current_bar_count": None,
         "pearson_ranked_count": None,
+        "pearson_min_shortlist_passed": False,
         "similarity_ranked_count": None,
         "forecast_candidate_count": None,
         "decision": "NO_TRADE",
         "reason": "NO_EVAL_WINDOW",
+        "current_reference_price": None,
         "best_similarity_score": None,
         "last_similarity_score": None,
         "mean_final_move": None,
         "median_final_move": None,
+        "mean_final_move_points": None,
+        "median_final_move_points": None,
+        "min_final_move_points": None,
         "positive_ratio": None,
         "negative_ratio": None,
         "mean_max_upside": None,
@@ -597,8 +658,7 @@ def process_hour_chunk(
                 )
 
                 total_snapshot_count += evaluated_rows_count
-                if hour_result_row["trade_opened"]:
-                    hour_summary_rows.append(hour_result_row)
+                hour_summary_rows.append(hour_result_row)
 
             except Exception as exc:
                 skipped_hours.append(
@@ -922,31 +982,21 @@ if __name__ == "__main__":
     #
     # Если хочешь перебор, просто добавляй сюда списки значений.
     PARAM_SPECS = {
-        "pearson_shortlist_min_correlation": [0.7],
+        "pearson_shortlist_min_correlation": [0.70],
         "pearson_shortlist_top_n": [30],
+        "pearson_min_shortlist": [5],
         "forecast_top_n_after_similarity": [5],
-        "decision_min_best_similarity_score": [0.3],
-        "decision_min_last_similarity_score": [0.3],
-        #
-        "similarity_weight_pearson": [1],  # 4
-        "similarity_weight_range": [1],  # 2
-        "similarity_weight_net_move": [1],  # 2
-        "similarity_weight_mean_abs_diff": [1],  # 2
-        "similarity_weight_efficiency": [1],  # 1
-
-
-
-        # "similarity_weight_range_position": [1.0],  # 0
-        # "similarity_weight_diff_pearson": [1.0],  # 0
-        # "similarity_weight_diff_sign_match": [1.0],  # 0
-
-        # "decision_min_mean_final_move_abs": [0.0008],  # 0
-        # "decision_min_median_final_move_abs": [0.0008],  # 0
-
-        # "decision_min_similarity_candidates": [3],
-        # "decision_min_forecast_candidates": [3],
-
+        "decision_min_last_similarity_score": [0.30],
+        "decision_min_final_move_points": [10.0],
+        # "decision_min_directional_ratio": [0.60],
+        "similarity_weight_pearson": [4.0],
+        "similarity_weight_range": [2.0],
+        "similarity_weight_net_move": [2.0],
+        "similarity_weight_mean_abs_diff": [2.0],
+        "similarity_weight_efficiency": [2.0],
+        # "similarity_weight_range_position": [2.0],
         # "decision_use_adverse_move_filter": [False, True],
+        # "decision_max_mean_adverse_move_points": [10.0],
     }
     RESUME_FROM_EXISTING = False
 
