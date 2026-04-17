@@ -87,6 +87,10 @@ class DecisionOrderExecutor:
             return
 
         self._restore_open_trade_state_if_needed()
+
+        if self._is_empty_snapshot(snapshot):
+            return
+
         self._sync_runtime_state(snapshot)
 
         if not self.enabled:
@@ -305,6 +309,12 @@ class DecisionOrderExecutor:
             return False
 
         return dt_ct.weekday() == 4 and int(hour_slot_ct) == 15
+
+    def _is_empty_snapshot(self, snapshot) -> bool:
+        return (
+                getattr(snapshot, "hour_start_ts", None) is None
+                or getattr(snapshot, "current_bar_index", None) is None
+        )
 
     def _should_exit(self, snapshot) -> bool:
         if self.state.position_side is None:
@@ -754,6 +764,15 @@ class DecisionOrderExecutor:
         return int(datetime.now(timezone.utc).timestamp())
 
     def _sync_runtime_state(self, snapshot):
+        if snapshot is None:
+            return
+
+        if getattr(snapshot, "hour_start_ts", None) is None:
+            return
+
+        if getattr(snapshot, "current_bar_index", None) is None:
+            return
+
         last_decision = None
         last_decision_reason = None
         if snapshot.decision_result is not None:
