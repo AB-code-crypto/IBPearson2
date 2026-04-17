@@ -396,10 +396,25 @@ class PearsonLiveRuntime:
         return forecast_summary
 
     def _build_decision_result(self, ranked_similarity_candidates, forecast_summary):
-        # Строим formal decision layer поверх similarity и forecast.
+        current_reference_price = None
+        current_bar_index = None
+
+        if self.current_hour is not None:
+            current_bar_index = self.current_hour.current_bar_index()
+
+            if (
+                    self.current_hour.mid_open_0 is not None
+                    and current_bar_index is not None
+                    and 0 <= current_bar_index < len(self.current_hour.x)
+            ):
+                current_reference_price = self.current_hour.mid_open_0 * (
+                        1.0 + self.current_hour.x[current_bar_index]
+                )
+
         return evaluate_decision_layer(
             ranked_similarity_candidates=ranked_similarity_candidates,
             forecast_summary=forecast_summary,
+            current_reference_price=current_reference_price,
             params=self.strategy_params,
         )
 

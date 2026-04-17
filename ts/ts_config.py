@@ -116,10 +116,8 @@ DECISION_MIN_LAST_SIMILARITY_SCORE = 0.3
 # Минимальная доля кандидатов, идущих в одну сторону.
 DECISION_MIN_DIRECTIONAL_RATIO = 0.60
 
-# Минимальное по модулю ожидаемое движение к концу часа.
-# 0.0005 = 0.05%
-DECISION_MIN_MEAN_FINAL_MOVE_ABS = 0.0005
-DECISION_MIN_MEDIAN_FINAL_MOVE_ABS = 0.0005
+# Минимальный ожидаемый потенциал до конца часа в пунктах инструмента.
+DECISION_MIN_FINAL_MOVE_POINTS = 10
 
 # Требовать ли, чтобы mean и median указывали в одну сторону.
 DECISION_REQUIRE_MEAN_AND_MEDIAN_SAME_DIRECTION = True

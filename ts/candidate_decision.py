@@ -66,9 +66,14 @@ def build_decision_diagnostics(ranked_similarity_candidates, forecast_summary):
     }
 
 
+def convert_relative_move_to_points(relative_move, current_reference_price):
+    return abs(relative_move) * current_reference_price
+
+
 def evaluate_decision_layer(
         ranked_similarity_candidates,
         forecast_summary,
+        current_reference_price,
         params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
 ):
     # Первый простой decision layer.
@@ -87,10 +92,17 @@ def evaluate_decision_layer(
         ranked_similarity_candidates=ranked_similarity_candidates,
         forecast_summary=forecast_summary,
     )
+    diagnostics["current_reference_price"] = current_reference_price
 
     if forecast_summary is None:
         return build_no_trade_result(
             reason="forecast_summary отсутствует",
+            diagnostics=diagnostics,
+        )
+
+    if current_reference_price is None or current_reference_price <= 0.0:
+        return build_no_trade_result(
+            reason="Некорректная текущая reference price для перевода прогноза в пункты",
             diagnostics=diagnostics,
         )
 
@@ -129,23 +141,25 @@ def evaluate_decision_layer(
                 diagnostics=diagnostics,
             )
 
-    mean_final_move_abs = abs(diagnostics["mean_final_move"])
-    median_final_move_abs = abs(diagnostics["median_final_move"])
+    mean_final_move_points = convert_relative_move_to_points(
+        diagnostics["mean_final_move"],
+        current_reference_price,
+    )
+    median_final_move_points = convert_relative_move_to_points(
+        diagnostics["median_final_move"],
+        current_reference_price,
+    )
+    min_final_move_points = min(mean_final_move_points, median_final_move_points)
 
-    if mean_final_move_abs < params.decision_min_mean_final_move_abs:
+    diagnostics["mean_final_move_points"] = mean_final_move_points
+    diagnostics["median_final_move_points"] = median_final_move_points
+    diagnostics["min_final_move_points"] = min_final_move_points
+
+    if min_final_move_points < params.decision_min_final_move_points:
         return build_no_trade_result(
             reason=(
-                f"Среднее ожидаемое движение слишком мало: "
-                f"{mean_final_move_abs:.6f} < {params.decision_min_mean_final_move_abs:.6f}"
-            ),
-            diagnostics=diagnostics,
-        )
-
-    if median_final_move_abs < params.decision_min_median_final_move_abs:
-        return build_no_trade_result(
-            reason=(
-                f"Медианное ожидаемое движение слишком мало: "
-                f"{median_final_move_abs:.6f} < {params.decision_min_median_final_move_abs:.6f}"
+                f"Ожидаемый потенциал слишком мал: "
+                f"{min_final_move_points:.2f} < {params.decision_min_final_move_points:.2f} пунктов"
             ),
             diagnostics=diagnostics,
         )
@@ -161,12 +175,18 @@ def evaluate_decision_layer(
             )
 
         if params.decision_use_adverse_move_filter:
-            if abs(diagnostics["mean_max_drawdown"]) > params.decision_max_mean_adverse_move_abs:
+            long_adverse_move_points = convert_relative_move_to_points(
+                diagnostics["mean_max_drawdown"],
+                current_reference_price,
+            )
+            diagnostics["long_adverse_move_points"] = long_adverse_move_points
+
+            if long_adverse_move_points > params.decision_max_mean_adverse_move_abs:
                 return build_no_trade_result(
                     reason=(
                         f"Слишком большой средний adverse move для LONG: "
-                        f"{abs(diagnostics['mean_max_drawdown']):.6f} > "
-                        f"{params.decision_max_mean_adverse_move_abs:.6f}"
+                        f"{long_adverse_move_points:.2f} > "
+                        f"{params.decision_max_mean_adverse_move_abs:.2f} пунктов"
                     ),
                     diagnostics=diagnostics,
                 )
@@ -188,12 +208,18 @@ def evaluate_decision_layer(
             )
 
         if params.decision_use_adverse_move_filter:
-            if diagnostics["mean_max_upside"] > params.decision_max_mean_adverse_move_abs:
+            short_adverse_move_points = convert_relative_move_to_points(
+                diagnostics["mean_max_upside"],
+                current_reference_price,
+            )
+            diagnostics["short_adverse_move_points"] = short_adverse_move_points
+
+            if short_adverse_move_points > params.decision_max_mean_adverse_move_abs:
                 return build_no_trade_result(
                     reason=(
                         f"Слишком большой средний adverse move для SHORT: "
-                        f"{diagnostics['mean_max_upside']:.6f} > "
-                        f"{params.decision_max_mean_adverse_move_abs:.6f}"
+                        f"{short_adverse_move_points:.2f} > "
+                        f"{params.decision_max_mean_adverse_move_abs:.2f} пунктов"
                     ),
                     diagnostics=diagnostics,
                 )
