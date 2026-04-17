@@ -351,7 +351,6 @@ class PearsonLiveRuntime:
         ranked_similarity_candidates = rank_prepared_candidates_by_similarity(
             current_values=self.current_hour.x,
             prepared_hours=shortlist_prepared_hours,
-            min_required_pearson=None,
             params=self.strategy_params,
         )
 
