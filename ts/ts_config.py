@@ -66,7 +66,6 @@ PEARSON_MIN_SHORTLIST = 5
 # Настройки второго шага: score похожести кандидатов
 # ============================================================
 
-SIMILARITY_NET_MOVE_DISTANCE_ZERO_AT = 0.50
 SIMILARITY_MEAN_ABS_DIFF_DISTANCE_ZERO_AT = 0.50
 SIMILARITY_EFFICIENCY_DISTANCE_ZERO_AT = 0.50
 

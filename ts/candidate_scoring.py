@@ -122,12 +122,22 @@ def evaluate_similarity_between_prefixes(
         )
         range_score = 1.0 - range_distance
 
-    current_net_move = calc_net_move(current_values)
-    candidate_net_move = calc_net_move(candidate_values)
-    net_move_distance = calc_relative_distance(
-        current_net_move,
-        candidate_net_move,
-    )
+    current_net_move = None
+    candidate_net_move = None
+    net_move_distance = None
+    net_move_score = 0.0
+    if params.similarity_weight_net_move > 0.0:
+        current_net_move = calc_net_move(current_values)
+        candidate_net_move = calc_net_move(candidate_values)
+
+        if current_net_move * candidate_net_move < 0.0:
+            net_move_score = 0.0
+        else:
+            net_move_distance = calc_relative_distance(
+                current_net_move,
+                candidate_net_move,
+            )
+            net_move_score = 1.0 - net_move_distance
 
     current_range_position = calc_range_position(current_values)
     candidate_range_position = calc_range_position(candidate_values)
@@ -162,10 +172,6 @@ def evaluate_similarity_between_prefixes(
         value=diff_sign_match_ratio,
         score_zero_at=params.similarity_diff_sign_match_score_zero_at,
         score_one_at=params.similarity_diff_sign_match_score_one_at,
-    )
-    net_move_score = calc_score_from_distance(
-        distance=net_move_distance,
-        distance_zero_at=params.similarity_net_move_distance_zero_at,
     )
     range_position_score = calc_score_from_distance(
         distance=range_position_distance,
