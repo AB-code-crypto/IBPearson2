@@ -156,10 +156,7 @@ def evaluate_similarity_between_prefixes(
         score_zero_at=params.similarity_diff_sign_match_score_zero_at,
         score_one_at=params.similarity_diff_sign_match_score_one_at,
     )
-    range_score = calc_score_from_distance(
-        distance=range_distance,
-        distance_zero_at=params.similarity_range_distance_zero_at,
-    )
+    range_score = 1.0 - range_distance
     net_move_score = calc_score_from_distance(
         distance=net_move_distance,
         distance_zero_at=params.similarity_net_move_distance_zero_at,
