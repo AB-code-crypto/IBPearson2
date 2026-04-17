@@ -184,10 +184,6 @@ def evaluate_similarity_between_prefixes(
         distance=range_position_distance,
         distance_zero_at=params.similarity_range_position_distance_zero_at,
     )
-    mean_abs_diff_score = calc_score_from_distance(
-        distance=mean_abs_diff_distance,
-        distance_zero_at=params.similarity_mean_abs_diff_distance_zero_at,
-    )
     efficiency_score = calc_score_from_distance(
         distance=efficiency_distance,
         distance_zero_at=params.similarity_efficiency_distance_zero_at,
