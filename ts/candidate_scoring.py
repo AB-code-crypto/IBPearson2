@@ -2,7 +2,6 @@ from ts.candidate_features import (
     build_first_diff,
     calc_mean_abs_diff,
     calc_net_move,
-    calc_path_efficiency,
     calc_path_efficiency_from_parts,
     calc_range,
     calc_range_position,
@@ -236,7 +235,6 @@ def evaluate_prepared_candidate_similarity(
 def rank_prepared_candidates_by_similarity(
         current_values,
         prepared_hours,
-        min_required_pearson=None,
         params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
 ):
     # Считаем score похожести для списка prepared-кандидатов и сортируем их.
@@ -250,9 +248,6 @@ def rank_prepared_candidates_by_similarity(
         )
 
         if item is None:
-            continue
-
-        if min_required_pearson is not None and item["pearson"] < min_required_pearson:
             continue
 
         ranked.append(item)
