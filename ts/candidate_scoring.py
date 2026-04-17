@@ -86,19 +86,6 @@ def calc_weighted_average_score(score_items):
     return weighted_sum / total_weight
 
 
-def build_similarity_features(values):
-    # Строим набор низкоуровневых признаков участка.
-    diff_values = build_first_diff(values)
-
-    return {
-        "range": calc_range(values),
-        "net_move": calc_net_move(values),
-        "range_position": calc_range_position(values),
-        "mean_abs_diff": calc_mean_abs_diff(diff_values),
-        "path_efficiency": calc_path_efficiency(values),
-    }
-
-
 def evaluate_similarity_between_prefixes(
         current_values,
         candidate_values,
@@ -119,28 +106,48 @@ def evaluate_similarity_between_prefixes(
     diff_pearson = calc_diff_pearson(current_values, candidate_values)
     diff_sign_match_ratio = calc_diff_sign_match_ratio(current_values, candidate_values)
 
-    current_features = build_similarity_features(current_values)
-    candidate_features = build_similarity_features(candidate_values)
+    current_diff_values = build_first_diff(current_values)
+    candidate_diff_values = build_first_diff(candidate_values)
 
-    range_distance = calc_relative_distance(
-        current_features["range"],
-        candidate_features["range"],
-    )
+    current_range = None
+    candidate_range = None
+    range_distance = None
+    range_score = 0.0
+    if params.similarity_weight_range > 0.0:
+        current_range = calc_range(current_values)
+        candidate_range = calc_range(candidate_values)
+        range_distance = calc_relative_distance(
+            current_range,
+            candidate_range,
+        )
+        range_score = 1.0 - range_distance
+
+    current_net_move = calc_net_move(current_values)
+    candidate_net_move = calc_net_move(candidate_values)
     net_move_distance = calc_relative_distance(
-        current_features["net_move"],
-        candidate_features["net_move"],
+        current_net_move,
+        candidate_net_move,
     )
+
+    current_range_position = calc_range_position(current_values)
+    candidate_range_position = calc_range_position(candidate_values)
     range_position_distance = calc_absolute_distance(
-        current_features["range_position"],
-        candidate_features["range_position"],
+        current_range_position,
+        candidate_range_position,
     )
+
+    current_mean_abs_diff = calc_mean_abs_diff(current_diff_values)
+    candidate_mean_abs_diff = calc_mean_abs_diff(candidate_diff_values)
     mean_abs_diff_distance = calc_relative_distance(
-        current_features["mean_abs_diff"],
-        candidate_features["mean_abs_diff"],
+        current_mean_abs_diff,
+        candidate_mean_abs_diff,
     )
+
+    current_path_efficiency = calc_path_efficiency(current_values)
+    candidate_path_efficiency = calc_path_efficiency(candidate_values)
     efficiency_distance = calc_relative_distance(
-        current_features["path_efficiency"],
-        candidate_features["path_efficiency"],
+        current_path_efficiency,
+        candidate_path_efficiency,
     )
 
     pearson_score = pearson
@@ -156,7 +163,6 @@ def evaluate_similarity_between_prefixes(
         score_zero_at=params.similarity_diff_sign_match_score_zero_at,
         score_one_at=params.similarity_diff_sign_match_score_one_at,
     )
-    range_score = 1.0 - range_distance
     net_move_score = calc_score_from_distance(
         distance=net_move_distance,
         distance_zero_at=params.similarity_net_move_distance_zero_at,
@@ -191,20 +197,20 @@ def evaluate_similarity_between_prefixes(
         "pearson": pearson,
         "diff_pearson": diff_pearson,
         "diff_sign_match_ratio": diff_sign_match_ratio,
-        "current_range": current_features["range"],
-        "candidate_range": candidate_features["range"],
+        "current_range": current_range,
+        "candidate_range": candidate_range,
         "range_distance": range_distance,
-        "current_net_move": current_features["net_move"],
-        "candidate_net_move": candidate_features["net_move"],
+        "current_net_move": current_net_move,
+        "candidate_net_move": candidate_net_move,
         "net_move_distance": net_move_distance,
-        "current_range_position": current_features["range_position"],
-        "candidate_range_position": candidate_features["range_position"],
+        "current_range_position": current_range_position,
+        "candidate_range_position": candidate_range_position,
         "range_position_distance": range_position_distance,
-        "current_mean_abs_diff": current_features["mean_abs_diff"],
-        "candidate_mean_abs_diff": candidate_features["mean_abs_diff"],
+        "current_mean_abs_diff": current_mean_abs_diff,
+        "candidate_mean_abs_diff": candidate_mean_abs_diff,
         "mean_abs_diff_distance": mean_abs_diff_distance,
-        "current_path_efficiency": current_features["path_efficiency"],
-        "candidate_path_efficiency": candidate_features["path_efficiency"],
+        "current_path_efficiency": current_path_efficiency,
+        "candidate_path_efficiency": candidate_path_efficiency,
         "efficiency_distance": efficiency_distance,
         "pearson_score": pearson_score,
         "diff_pearson_score": diff_pearson_score,
