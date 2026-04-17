@@ -109,9 +109,6 @@ FORECAST_TOP_N_AFTER_SIMILARITY = 5
 # - NO_TRADE
 
 
-# Минимальный итоговый similarity-score у лучшего кандидата.
-DECISION_MIN_BEST_SIMILARITY_SCORE = 0.3
-
 # Минимальный итоговый similarity-score у последнего кандидата
 # внутри top-N, который реально попадает в forecast и decision.
 DECISION_MIN_LAST_SIMILARITY_SCORE = 0.3

@@ -94,22 +94,6 @@ def evaluate_decision_layer(
             diagnostics=diagnostics,
         )
 
-    best_similarity_score = diagnostics["best_similarity_score"]
-    if best_similarity_score is None:
-        return build_no_trade_result(
-            reason="Не удалось определить best_similarity_score",
-            diagnostics=diagnostics,
-        )
-
-    if best_similarity_score < params.decision_min_best_similarity_score:
-        return build_no_trade_result(
-            reason=(
-                f"Лучший similarity-score слишком мал: "
-                f"{best_similarity_score:.4f} < {params.decision_min_best_similarity_score:.4f}"
-            ),
-            diagnostics=diagnostics,
-        )
-
     last_similarity_score = diagnostics["last_similarity_score"]
     if last_similarity_score is None:
         return build_no_trade_result(
