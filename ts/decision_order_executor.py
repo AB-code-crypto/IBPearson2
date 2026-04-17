@@ -86,6 +86,7 @@ class DecisionOrderExecutor:
         if snapshot is None:
             return
 
+        self._restore_open_trade_state_if_needed()
         self._sync_runtime_state(snapshot)
 
         if not self.enabled:
@@ -240,6 +241,12 @@ class DecisionOrderExecutor:
     def _can_enter(self, snapshot) -> bool:
         if self.state.position_side is not None:
             return False
+
+        open_trade = get_open_trade_for_instrument(self.trade_db_path, self.instrument_code)
+        if open_trade is not None:
+            self._hydrate_state_from_open_trade(open_trade)
+            return False
+
         if not snapshot.decision_calculated:
             return False
         if snapshot.decision_result is None:
@@ -256,6 +263,35 @@ class DecisionOrderExecutor:
             return False
 
         return True
+
+    def _restore_open_trade_state_if_needed(self):
+        if self.state.position_side is not None:
+            return
+
+        open_trade = get_open_trade_for_instrument(self.trade_db_path, self.instrument_code)
+        if open_trade is None:
+            return
+
+        self._hydrate_state_from_open_trade(open_trade)
+
+    def _hydrate_state_from_open_trade(self, open_trade):
+        position_side = open_trade["side"]
+        if position_side not in ("LONG", "SHORT"):
+            return
+
+        position_qty = int(open_trade["quantity"] or 0)
+        if position_qty <= 0:
+            return
+
+        current_trade_id = int(open_trade["trade_id"])
+        entry_hour_start_ts = open_trade["signal_hour_start_ts"]
+
+        self.hydrate_recovered_state(
+            current_trade_id=current_trade_id,
+            position_side=position_side,
+            position_qty=position_qty,
+            entry_hour_start_ts=entry_hour_start_ts,
+        )
 
     def _is_friday_last_trading_hour(self, snapshot) -> bool:
         hour_start_ct = getattr(snapshot, "hour_start_ct", None)
@@ -347,6 +383,7 @@ class DecisionOrderExecutor:
             trade_id=trade_id,
             event_type="ENTRY_SUBMITTED",
             snapshot=snapshot,
+            event_ts=entry_submitted_ts,
             message=f"Отправлен ордер на вход {decision}",
             payload={
                 "order_ref": order_ref,
@@ -372,6 +409,7 @@ class DecisionOrderExecutor:
             trade_id=trade_id,
             event_type="ENTRY_FILLED",
             snapshot=snapshot,
+            event_ts=entry_filled_ts,
             message=f"Вход исполнен {decision}",
             payload={
                 "avg_fill_price": placement.avg_fill_price,
@@ -400,6 +438,7 @@ class DecisionOrderExecutor:
             trade_id=trade_id,
             event_type="EXIT_SUBMITTED",
             snapshot=snapshot,
+            event_ts=exit_submitted_ts,
             message=f"Отправлен ордер на выход {exit_side}",
             payload={
                 "order_ref": order_ref,
@@ -433,6 +472,7 @@ class DecisionOrderExecutor:
             trade_id=trade_id,
             event_type="EXIT_FILLED",
             snapshot=snapshot,
+            event_ts=exit_filled_ts,
             message=f"Выход исполнен {exit_side}",
             payload={
                 "avg_fill_price": placement.avg_fill_price,
@@ -685,8 +725,8 @@ class DecisionOrderExecutor:
             forecast_summary=snapshot.forecast_summary,
         )
 
-    def _append_event(self, *, trade_id, event_type, snapshot, message=None, payload=None):
-        event_ts = snapshot.last_bar_time_ts
+    def _append_event(self, *, trade_id, event_type, snapshot, event_ts=None, message=None, payload=None):
+        event_ts = self._resolve_event_ts(snapshot=snapshot, event_ts=event_ts)
         event_time = self._format_utc_ts(event_ts)
         append_trade_event(
             self.trade_db_path,
@@ -698,6 +738,16 @@ class DecisionOrderExecutor:
             message=message,
             payload=payload,
         )
+
+    def _resolve_event_ts(self, *, snapshot, event_ts=None):
+        if event_ts is not None:
+            return int(event_ts)
+
+        snapshot_ts = getattr(snapshot, "last_bar_time_ts", None)
+        if snapshot_ts is not None:
+            return int(snapshot_ts)
+
+        return int(datetime.now(timezone.utc).timestamp())
 
     def _sync_runtime_state(self, snapshot):
         last_decision = None
