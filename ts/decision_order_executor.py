@@ -312,6 +312,10 @@ class DecisionOrderExecutor:
         if self.state.entry_hour_start_ts is None:
             return False
 
+        # Пустой/неинициализированный snapshot не должен закрывать позицию.
+        if snapshot.hour_start_ts is None:
+            return False
+
         if snapshot.hour_start_ts == self.state.entry_hour_start_ts:
             return (
                     snapshot.current_bar_index is not None

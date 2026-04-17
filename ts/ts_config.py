@@ -126,6 +126,6 @@ DECISION_REQUIRE_MEAN_AND_MEDIAN_SAME_DIRECTION = True
 # - для LONG mean_max_drawdown не глубже порога
 # - для SHORT mean_max_upside не выше порога
 #
-# Порог задаётся по модулю.
+# Порог задаётся в пунтках.
 DECISION_USE_ADVERSE_MOVE_FILTER = False
 DECISION_MAX_MEAN_ADVERSE_MOVE_POINTS = 10
