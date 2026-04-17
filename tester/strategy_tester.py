@@ -339,6 +339,10 @@ def apply_trade_to_row(
 
 
 def save_hour_summary_to_csv(hour_summary_rows: list[dict], output_csv_path: str | Path):
+    trade_rows = [row for row in hour_summary_rows if row.get("trade_opened")]
+    if not trade_rows:
+        return
+
     output_path = Path(output_csv_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -384,7 +388,7 @@ def save_hour_summary_to_csv(hour_summary_rows: list[dict], output_csv_path: str
     with output_path.open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        for row in hour_summary_rows:
+        for row in trade_rows:
             writer.writerow(row)
 
 
@@ -961,10 +965,10 @@ if __name__ == "__main__":
     instrument_code = "MNQ"
 
     # UTC input range
-    # start_utc = "2026-01-01 00:00:00"
+    start_utc = "2026-01-01 00:00:00"
     # end_utc = "2026-04-04 00:00:00"
-    start_utc = "2026-03-27 00:00:00"
-    end_utc = "2026-04-07 00:00:00"
+    # start_utc = "2026-03-27 00:00:00"
+    end_utc = "2026-04-11 00:00:00"
 
     instrument_row = Instrument[instrument_code]
     multiplier = float(instrument_row["multiplier"])
