@@ -181,12 +181,12 @@ def evaluate_decision_layer(
             )
             diagnostics["long_adverse_move_points"] = long_adverse_move_points
 
-            if long_adverse_move_points > params.decision_max_mean_adverse_move_abs:
+            if long_adverse_move_points > params.decision_max_mean_adverse_move_points:
                 return build_no_trade_result(
                     reason=(
                         f"Слишком большой средний adverse move для LONG: "
                         f"{long_adverse_move_points:.2f} > "
-                        f"{params.decision_max_mean_adverse_move_abs:.2f} пунктов"
+                        f"{params.decision_max_mean_adverse_move_points:.2f} пунктов"
                     ),
                     diagnostics=diagnostics,
                 )
@@ -214,12 +214,12 @@ def evaluate_decision_layer(
             )
             diagnostics["short_adverse_move_points"] = short_adverse_move_points
 
-            if short_adverse_move_points > params.decision_max_mean_adverse_move_abs:
+            if short_adverse_move_points > params.decision_max_mean_adverse_move_points:
                 return build_no_trade_result(
                     reason=(
                         f"Слишком большой средний adverse move для SHORT: "
                         f"{short_adverse_move_points:.2f} > "
-                        f"{params.decision_max_mean_adverse_move_abs:.2f} пунктов"
+                        f"{params.decision_max_mean_adverse_move_points:.2f} пунктов"
                     ),
                     diagnostics=diagnostics,
                 )

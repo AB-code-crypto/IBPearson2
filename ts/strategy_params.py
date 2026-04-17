@@ -47,7 +47,7 @@ class StrategyParams:
         ts_config.DECISION_REQUIRE_MEAN_AND_MEDIAN_SAME_DIRECTION
     )
     decision_use_adverse_move_filter: bool = ts_config.DECISION_USE_ADVERSE_MOVE_FILTER
-    decision_max_mean_adverse_move_abs: float = ts_config.DECISION_MAX_MEAN_ADVERSE_MOVE_ABS
+    decision_max_mean_adverse_move_points: float = ts_config.DECISION_MAX_MEAN_ADVERSE_MOVE_POINTS
 
     # ============================================================
     # Hour-slot search groups
