@@ -143,11 +143,7 @@ def evaluate_similarity_between_prefixes(
         candidate_features["path_efficiency"],
     )
 
-    pearson_score = calc_score_from_value(
-        value=pearson,
-        score_zero_at=params.similarity_pearson_score_zero_at,
-        score_one_at=params.similarity_pearson_score_one_at,
-    )
+    pearson_score = pearson
     diff_pearson_score = 0.0
     if diff_pearson is not None:
         diff_pearson_score = calc_score_from_value(
