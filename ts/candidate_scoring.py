@@ -106,9 +106,6 @@ def evaluate_similarity_between_prefixes(
     diff_pearson = calc_diff_pearson(current_values, candidate_values)
     diff_sign_match_ratio = calc_diff_sign_match_ratio(current_values, candidate_values)
 
-    current_diff_values = build_first_diff(current_values)
-    candidate_diff_values = build_first_diff(candidate_values)
-
     current_range = None
     candidate_range = None
     range_distance = None
@@ -146,12 +143,22 @@ def evaluate_similarity_between_prefixes(
         candidate_range_position,
     )
 
-    current_mean_abs_diff = calc_mean_abs_diff(current_diff_values)
-    candidate_mean_abs_diff = calc_mean_abs_diff(candidate_diff_values)
-    mean_abs_diff_distance = calc_relative_distance(
-        current_mean_abs_diff,
-        candidate_mean_abs_diff,
-    )
+    current_mean_abs_diff = None
+    candidate_mean_abs_diff = None
+    mean_abs_diff_distance = None
+    mean_abs_diff_score = 0.0
+
+    if params.similarity_weight_mean_abs_diff > 0.0:
+        current_diff_values = build_first_diff(current_values)
+        candidate_diff_values = build_first_diff(candidate_values)
+
+        current_mean_abs_diff = calc_mean_abs_diff(current_diff_values)
+        candidate_mean_abs_diff = calc_mean_abs_diff(candidate_diff_values)
+        mean_abs_diff_distance = calc_relative_distance(
+            current_mean_abs_diff,
+            candidate_mean_abs_diff,
+        )
+        mean_abs_diff_score = 1.0 - mean_abs_diff_distance
 
     current_path_efficiency = calc_path_efficiency(current_values)
     candidate_path_efficiency = calc_path_efficiency(candidate_values)
