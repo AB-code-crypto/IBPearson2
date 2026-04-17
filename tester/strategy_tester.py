@@ -963,8 +963,8 @@ if __name__ == "__main__":
     # UTC input range
     # start_utc = "2026-01-01 00:00:00"
     # end_utc = "2026-04-04 00:00:00"
-    start_utc = "2026-04-08 00:00:00"
-    end_utc = "2026-04-11 00:00:00"
+    start_utc = "2026-03-27 00:00:00"
+    end_utc = "2026-04-07 00:00:00"
 
     instrument_row = Instrument[instrument_code]
     multiplier = float(instrument_row["multiplier"])
@@ -988,15 +988,12 @@ if __name__ == "__main__":
         "forecast_top_n_after_similarity": [5],
         "decision_min_last_similarity_score": [0.30],
         "decision_min_final_move_points": [10.0],
-        # "decision_min_directional_ratio": [0.60],
+
         "similarity_weight_pearson": [4.0],
         "similarity_weight_range": [2.0],
         "similarity_weight_net_move": [2.0],
         "similarity_weight_mean_abs_diff": [2.0],
         "similarity_weight_efficiency": [2.0],
-        # "similarity_weight_range_position": [2.0],
-        # "decision_use_adverse_move_filter": [False, True],
-        # "decision_max_mean_adverse_move_points": [10.0],
     }
     RESUME_FROM_EXISTING = False
 
