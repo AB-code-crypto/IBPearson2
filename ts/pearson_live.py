@@ -156,7 +156,7 @@ class PearsonLiveRuntime:
             correlation_calculated = True
 
             if not self.strategy_params.pearson_has_enough_shortlist_candidates(
-                len(ranked_candidates)
+                    len(ranked_candidates)
             ):
                 self.last_snapshot = self._build_snapshot(
                     correlation_calculated=correlation_calculated,
@@ -342,9 +342,11 @@ class PearsonLiveRuntime:
                     f"Не найден prepared-кандидат для hour_start_ts={hour_start_ts}"
                 )
 
-            shortlist_prepared_hours.append(
+            shortlist_prepared_hour = dict(
                 self.current_hour_prepared_hours_map[hour_start_ts]
             )
+            shortlist_prepared_hour["correlation"] = item["correlation"]
+            shortlist_prepared_hours.append(shortlist_prepared_hour)
 
         ranked_similarity_candidates = rank_prepared_candidates_by_similarity(
             current_values=self.current_hour.x,

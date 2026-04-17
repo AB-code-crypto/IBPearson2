@@ -5,7 +5,6 @@ from ts.candidate_features import (
     calc_mean_abs_diff,
     calc_net_move,
     calc_path_efficiency,
-    calc_pearson_corr,
     calc_range,
     calc_range_position,
 )
@@ -101,9 +100,10 @@ def build_similarity_features(values):
 
 
 def evaluate_similarity_between_prefixes(
-    current_values,
-    candidate_values,
-    params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
+        current_values,
+        candidate_values,
+        pearson,
+        params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
 ):
     # Сравниваем два префикса и считаем все расстояния, score и итоговый результат.
     if len(current_values) != len(candidate_values):
@@ -112,8 +112,6 @@ def evaluate_similarity_between_prefixes(
             f"len(current_values)={len(current_values)}, "
             f"len(candidate_values)={len(candidate_values)}"
         )
-
-    pearson = calc_pearson_corr(current_values, candidate_values)
 
     if pearson is None:
         return None
@@ -228,15 +226,17 @@ def evaluate_similarity_between_prefixes(
 
 
 def evaluate_prepared_candidate_similarity(
-    current_values,
-    prepared_hour_payload,
-    params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
+        current_values,
+        prepared_hour_payload,
+        params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
 ):
     # Считаем score похожести для одного prepared-кандидата.
     candidate_values = prepared_hour_payload["y"][: len(current_values)]
+    pearson = prepared_hour_payload["correlation"]
     result = evaluate_similarity_between_prefixes(
         current_values=current_values,
         candidate_values=candidate_values,
+        pearson=pearson,
         params=params,
     )
 
@@ -257,10 +257,10 @@ def evaluate_prepared_candidate_similarity(
 
 
 def rank_prepared_candidates_by_similarity(
-    current_values,
-    prepared_hours,
-    min_required_pearson=None,
-    params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
+        current_values,
+        prepared_hours,
+        min_required_pearson=None,
+        params: StrategyParams = DEFAULT_STRATEGY_PARAMS,
 ):
     # Считаем score похожести для списка prepared-кандидатов и сортируем их.
     ranked = []
