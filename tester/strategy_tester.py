@@ -998,7 +998,7 @@ if __name__ == "__main__":
         "similarity_weight_net_move": [2.0],
         "similarity_weight_mean_abs_diff": [2.0],
         "similarity_weight_efficiency": [2.0],
-        "similarity_weight_range_position": [0, 1.0],
+        "similarity_weight_range_position": [2.0],
     }
     RESUME_FROM_EXISTING = False
 
