@@ -1000,7 +1000,7 @@ if __name__ == "__main__":
         "similarity_weight_efficiency": [2.0],
         "similarity_weight_range_position": [0, 1.0],
     }
-    RESUME_FROM_EXISTING = True
+    RESUME_FROM_EXISTING = False
 
     cpu_count = os.cpu_count() or 1
     max_workers = min(16, cpu_count)
