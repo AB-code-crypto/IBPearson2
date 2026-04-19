@@ -986,12 +986,12 @@ if __name__ == "__main__":
     #
     # Если хочешь перебор, просто добавляй сюда списки значений.
     PARAM_SPECS = {
-        "pearson_shortlist_min_correlation": [0.70],
-        "pearson_shortlist_top_n": [30],
-        "pearson_min_shortlist": [15],
-        "forecast_top_n_after_similarity": [5],
+        "pearson_shortlist_min_correlation": [0.70, 0.80],
+        "pearson_shortlist_top_n": [30, 50],
+        "pearson_min_shortlist": [15, 20],
+        "forecast_top_n_after_similarity": [3, 5, 7],
         "decision_min_last_similarity_score": [0.30],
-        "decision_min_final_move_points": [10.0],
+        "decision_min_final_move_points": [7.0, 10.0],
 
         "similarity_weight_pearson": [4.0],
         "similarity_weight_range": [1.0],
