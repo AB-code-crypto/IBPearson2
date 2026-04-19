@@ -993,16 +993,17 @@ if __name__ == "__main__":
         "decision_min_last_similarity_score": [0.30],
         "decision_min_final_move_points": [10.0],
 
-        "similarity_weight_pearson": [1.0, 2.0, 4.0],
-        "similarity_weight_range": [0, 1.0, 2.0],
-        "similarity_weight_net_move": [0, 1.0, 2.0],
-        "similarity_weight_mean_abs_diff": [0, 1.0, 2.0],
-        "similarity_weight_efficiency": [0, 1.0, 2.0],
+        "similarity_weight_pearson": [4.0],
+        "similarity_weight_range": [1.5, 0.5],
+        "similarity_weight_net_move": [2.0],
+        "similarity_weight_mean_abs_diff": [2.0],
+        "similarity_weight_efficiency": [2.0],
+        # "similarity_weight_range_position": [2.0],
     }
-    RESUME_FROM_EXISTING = False
+    RESUME_FROM_EXISTING = True
 
     cpu_count = os.cpu_count() or 1
-    max_workers = min(24, cpu_count)
+    max_workers = min(16, cpu_count)
     chunk_size = 1
 
     price_db_path = settings_live.price_db_path
