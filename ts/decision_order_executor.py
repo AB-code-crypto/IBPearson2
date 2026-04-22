@@ -131,8 +131,8 @@ class DecisionOrderExecutor:
                 snapshot=snapshot,
                 message=f"Получен торговый сигнал {decision}",
                 payload={
-                    "decision_result": snapshot.decision_result,
-                    "forecast_summary": snapshot.forecast_summary,
+                    # "decision_result": snapshot.decision_result,
+                    # "forecast_summary": snapshot.forecast_summary,
                 },
             )
             self._sync_runtime_state(snapshot)
@@ -735,8 +735,10 @@ class DecisionOrderExecutor:
             forecast_negative_ratio=forecast_negative_ratio,
             forecast_mean_final_move=forecast_mean_final_move,
             forecast_median_final_move=forecast_median_final_move,
-            decision_payload=snapshot.decision_result,
-            forecast_summary=snapshot.forecast_summary,
+            # decision_payload=snapshot.decision_result,
+            decision_payload=None,
+            # forecast_summary=snapshot.forecast_summary,
+            forecast_summary=None,
         )
 
     def _append_event(self, *, trade_id, event_type, snapshot, event_ts=None, message=None, payload=None):
