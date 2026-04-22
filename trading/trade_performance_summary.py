@@ -5,16 +5,12 @@ from zoneinfo import ZoneInfo
 
 from core.logger import get_logger, log_info, log_warning
 from core.telegram_sender import TelegramSender
-from trading.trade_store import ACTIVE_TRADE_STATUSES
 
 logger = get_logger(__name__)
 
 UTC = timezone.utc
 MSK_TZ = ZoneInfo("Europe/Moscow")
 CT_TZ = ZoneInfo("America/Chicago")
-
-UTC = timezone.utc
-MSK_TZ = ZoneInfo("Europe/Moscow")
 
 
 def _utc_ts(dt: datetime) -> int:
@@ -31,10 +27,6 @@ def _start_of_ct_day(now_ct: datetime) -> datetime:
 
 def _start_of_ct_hour(now_ct: datetime) -> datetime:
     return now_ct.replace(minute=0, second=0, microsecond=0)
-
-
-def _start_of_msk_day(now_msk: datetime) -> datetime:
-    return now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def _is_daily_due(now_msk: datetime) -> bool:
@@ -157,18 +149,6 @@ def _fetch_trade_summary(*, db_path: str, instrument_code: str, start_ts: int, e
             (instrument_code, start_ts, end_ts),
         ).fetchone()
 
-        placeholders = ", ".join("?" for _ in ACTIVE_TRADE_STATUSES)
-        active_row = conn.execute(
-            f"""
-            SELECT
-                COUNT(*) AS active_count,
-                COALESCE(SUM(quantity), 0) AS active_contracts
-            FROM trades
-            WHERE instrument_code = ?
-              AND status IN ({placeholders});
-            """,
-            (instrument_code, *ACTIVE_TRADE_STATUSES),
-        ).fetchone()
     finally:
         conn.close()
 
@@ -195,8 +175,6 @@ def _fetch_trade_summary(*, db_path: str, instrument_code: str, start_ts: int, e
         "avg_realized_pnl": float(closed_row["avg_realized_pnl"] or 0.0),
         "best_trade_pnl": float(closed_row["best_trade_pnl"] or 0.0),
         "worst_trade_pnl": float(closed_row["worst_trade_pnl"] or 0.0),
-        "active_count": int(active_row["active_count"] or 0),
-        "active_contracts": int(active_row["active_contracts"] or 0),
     }
 
 
