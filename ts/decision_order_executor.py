@@ -756,6 +756,7 @@ class DecisionOrderExecutor:
             forecast_median_final_move=forecast_median_final_move,
             decision_payload=strategy_params_snapshot,
             forecast_summary=plot_forecast_summary,
+
         )
 
     def _append_event(self, *, trade_id, event_type, snapshot, event_ts=None, message=None, payload=None):
