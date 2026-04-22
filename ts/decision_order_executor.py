@@ -105,6 +105,21 @@ class DecisionOrderExecutor:
 
         self._sync_runtime_state(snapshot)
 
+    def _build_plot_forecast_summary(self, snapshot):
+        if snapshot.forecast_summary is None:
+            return None
+
+        mean_future_path = snapshot.forecast_summary.get("mean_future_path")
+        median_future_path = snapshot.forecast_summary.get("median_future_path")
+
+        if not mean_future_path and not median_future_path:
+            return None
+
+        return {
+            "mean_future_path": mean_future_path,
+            "median_future_path": median_future_path,
+        }
+
     async def _maybe_enter_position(self, *, snapshot, active_futures, pearson_live_runtime=None):
         if not self._can_enter(snapshot):
             return
@@ -714,6 +729,8 @@ class DecisionOrderExecutor:
         if pearson_live_runtime is not None:
             strategy_params_snapshot = asdict(pearson_live_runtime.strategy_params)
 
+        plot_forecast_summary = self._build_plot_forecast_summary(snapshot)
+
         return create_trade(
             self.trade_db_path,
             instrument_code=self.instrument_code,
@@ -737,8 +754,8 @@ class DecisionOrderExecutor:
             forecast_negative_ratio=forecast_negative_ratio,
             forecast_mean_final_move=forecast_mean_final_move,
             forecast_median_final_move=forecast_median_final_move,
-            decision_payload=None,
-            forecast_summary=strategy_params_snapshot,
+            decision_payload=strategy_params_snapshot,
+            forecast_summary=plot_forecast_summary,
         )
 
     def _append_event(self, *, trade_id, event_type, snapshot, event_ts=None, message=None, payload=None):
