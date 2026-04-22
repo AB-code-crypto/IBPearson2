@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -121,6 +121,7 @@ class DecisionOrderExecutor:
                 snapshot=snapshot,
                 decision=decision,
                 contract_local_symbol=local_symbol,
+                pearson_live_runtime=pearson_live_runtime,
             )
             self.state.current_trade_id = trade_id
             self.state.entry_hour_start_ts = snapshot.hour_start_ts
@@ -692,7 +693,7 @@ class DecisionOrderExecutor:
     def _get_exit_side(self):
         return "SELL" if self.state.position_side == "LONG" else "BUY"
 
-    def _create_trade_from_snapshot(self, *, snapshot, decision, contract_local_symbol):
+    def _create_trade_from_snapshot(self, *, snapshot, decision, contract_local_symbol, pearson_live_runtime=None):
         best_similarity_score = None
         if snapshot.ranked_similarity_candidates:
             best_similarity_score = snapshot.ranked_similarity_candidates[0]["final_score"]
@@ -711,6 +712,10 @@ class DecisionOrderExecutor:
             forecast_negative_ratio = snapshot.forecast_summary["negative_ratio"]
             forecast_mean_final_move = snapshot.forecast_summary["mean_final_move"]
             forecast_median_final_move = snapshot.forecast_summary["median_final_move"]
+
+        strategy_params_snapshot = None
+        if pearson_live_runtime is not None:
+            strategy_params_snapshot = asdict(pearson_live_runtime.strategy_params)
 
         return create_trade(
             self.trade_db_path,
@@ -738,7 +743,7 @@ class DecisionOrderExecutor:
             # decision_payload=snapshot.decision_result,
             decision_payload=None,
             # forecast_summary=snapshot.forecast_summary,
-            forecast_summary=None,
+            forecast_summary=strategy_params_snapshot,
         )
 
     def _append_event(self, *, trade_id, event_type, snapshot, event_ts=None, message=None, payload=None):
