@@ -25,6 +25,10 @@ def _format_dt(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _start_of_ct_day(now_ct: datetime) -> datetime:
+    return now_ct.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 def _start_of_ct_hour(now_ct: datetime) -> datetime:
     return now_ct.replace(minute=0, second=0, microsecond=0)
 
@@ -43,28 +47,30 @@ def _is_weekly_due(now_ct: datetime) -> bool:
     return now_ct.weekday() == 4 and now_ct.hour == 15 and now_ct.minute == 1
 
 
-def _is_monthly_due(now_msk: datetime) -> bool:
-    # 00:02 MSK в первый календарный день после последнего торгового дня месяца.
-    if not (now_msk.hour == 0 and now_msk.minute == 2):
+def _is_monthly_due(now_ct: datetime) -> bool:
+    # 15:02 CT в последний торговый день месяца.
+    return (
+            now_ct.hour == 15
+            and now_ct.minute == 2
+            and _is_last_trading_day_of_month(now_ct)
+    )
+
+
+def _is_last_trading_day_of_month(now_ct: datetime) -> bool:
+    # Торговыми днями считаем только будни.
+    if now_ct.weekday() >= 5:
         return False
 
-    previous_day = now_msk.date() - timedelta(days=1)
+    current_date = now_ct.date()
 
-    # Обычный случай: вчера уже был последний календарный день месяца.
-    if previous_day.month != now_msk.date().month:
-        return True
+    if now_ct.weekday() == 4:
+        # Пятница -> следующий торговый день считаем понедельником.
+        next_trading_day = current_date + timedelta(days=3)
+    else:
+        # Пн-Чт -> следующий торговый день это завтра.
+        next_trading_day = current_date + timedelta(days=1)
 
-    # Специальный случай: сейчас суббота, а смена месяца попадает на выходные.
-    # Тогда месячный отчёт должен уйти в субботу 00:02 сразу после последней торговой пятницы.
-    if now_msk.weekday() == 5:
-        saturday = now_msk.date()
-        sunday = saturday + timedelta(days=1)
-        monday = saturday + timedelta(days=2)
-
-        if sunday.month != saturday.month or monday.month != saturday.month:
-            return True
-
-    return False
+    return next_trading_day.month != current_date.month
 
 
 def _build_daily_period(now_utc: datetime, now_msk: datetime) -> tuple[int, int, str]:
@@ -94,25 +100,19 @@ def _build_weekly_period(now_ct: datetime) -> tuple[int, int, str]:
     return _utc_ts(week_start_ct), _utc_ts(week_end_ct), period_label
 
 
-def _build_monthly_period(now_msk: datetime) -> tuple[int, int, str]:
-    report_end_msk = _start_of_msk_day(now_msk)
-    previous_day = report_end_msk.date() - timedelta(days=1)
+def _build_monthly_period(now_ct: datetime) -> tuple[int, int, str]:
+    # От начала месяца до начала последнего часа последнего торгового дня месяца по CT.
+    month_end_ct = _start_of_ct_hour(now_ct)
+    month_start_ct = _start_of_ct_day(month_end_ct).replace(day=1)
 
-    if previous_day.month != report_end_msk.date().month:
-        # Первый день нового месяца после последнего календарного дня старого месяца.
-        month_end_msk = report_end_msk
-        month_start_msk = month_end_msk.replace(day=1)
-    else:
-        # Субботний отчёт после последней торговой пятницы месяца,
-        # когда смена месяца попадает на выходные.
-        month_end_msk = report_end_msk
-        month_start_msk = month_end_msk.replace(day=1)
+    month_start_msk = month_start_ct.astimezone(MSK_TZ)
+    month_end_msk = month_end_ct.astimezone(MSK_TZ)
 
     period_label = (
         f"MSK {_format_dt(month_start_msk)} → "
         f"{_format_dt(month_end_msk)}"
     )
-    return _utc_ts(month_start_msk), _utc_ts(month_end_msk), period_label
+    return _utc_ts(month_start_ct), _utc_ts(month_end_ct), period_label
 
 
 def _fetch_trade_summary(*, db_path: str, instrument_code: str, start_ts: int, end_ts: int) -> dict:
@@ -302,26 +302,22 @@ async def trade_performance_summary_task(
                         await _send_summary_to_targets(sender=sender, settings=settings, text=text)
                         last_weekly_key = weekly_key
 
-                if _is_monthly_due(now_msk):
-                    monthly_key = _start_of_msk_day(now_msk).strftime("%Y-%m-%d")
-
+                if _is_monthly_due(now_ct):
+                    monthly_key = now_ct.strftime("%Y-%m")
                     if monthly_key != last_monthly_key:
-                        start_ts, end_ts, period_label = _build_monthly_period(now_msk)
-
+                        start_ts, end_ts, period_label = _build_monthly_period(now_ct)
                         summary = _fetch_trade_summary(
                             db_path=settings.trade_db_path,
                             instrument_code=instrument_code,
                             start_ts=start_ts,
                             end_ts=end_ts,
                         )
-
                         text = _build_summary_text(
                             title="ИТОГИ ТОРГОВЛИ ЗА МЕСЯЦ",
                             instrument_code=instrument_code,
                             period_label=period_label,
                             summary=summary,
                         )
-
                         await _send_summary_to_targets(sender=sender, settings=settings, text=text)
                         last_monthly_key = monthly_key
 
