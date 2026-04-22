@@ -201,9 +201,7 @@ def _build_summary_text(*, title: str, instrument_code: str, period_label: str, 
         f"Суммарные комиссии: {summary['total_commissions']:.2f}\n"
         f"Средний PnL на сделку: {summary['avg_realized_pnl']:.2f}\n"
         f"Лучшая сделка: {summary['best_trade_pnl']:.2f}\n"
-        f"Худшая сделка: {summary['worst_trade_pnl']:.2f}\n"
-        f"Активных открытых сделок сейчас: {summary['active_count']}\n"
-        f"Активный объём сейчас: {summary['active_contracts']}"
+        f"Худшая сделка: {summary['worst_trade_pnl']:.2f}\n#итог"
     )
 
 
