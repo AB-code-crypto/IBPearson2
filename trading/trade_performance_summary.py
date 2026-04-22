@@ -11,6 +11,10 @@ logger = get_logger(__name__)
 
 UTC = timezone.utc
 MSK_TZ = ZoneInfo("Europe/Moscow")
+CT_TZ = ZoneInfo("America/Chicago")
+
+UTC = timezone.utc
+MSK_TZ = ZoneInfo("Europe/Moscow")
 
 
 def _utc_ts(dt: datetime) -> int:
@@ -21,6 +25,10 @@ def _format_dt(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _start_of_ct_hour(now_ct: datetime) -> datetime:
+    return now_ct.replace(minute=0, second=0, microsecond=0)
+
+
 def _start_of_msk_day(now_msk: datetime) -> datetime:
     return now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -29,9 +37,10 @@ def _is_daily_due(now_msk: datetime) -> bool:
     return now_msk.hour == 0 and now_msk.minute == 0
 
 
-def _is_weekly_due(now_msk: datetime) -> bool:
-    # Суббота 00:01 MSK = итоги за завершившуюся торговую неделю.
-    return now_msk.weekday() == 5 and now_msk.hour == 0 and now_msk.minute == 1
+def _is_weekly_due(now_ct: datetime) -> bool:
+    # Пятница 15:01 CT = начало последнего часа перед клирингом.
+    # В этот час новые входы уже не открываем, поэтому можно слать недельный итог.
+    return now_ct.weekday() == 4 and now_ct.hour == 15 and now_ct.minute == 1
 
 
 def _is_monthly_due(now_msk: datetime) -> bool:
@@ -68,15 +77,21 @@ def _build_daily_period(now_utc: datetime, now_msk: datetime) -> tuple[int, int,
     return _utc_ts(start_utc), _utc_ts(end_utc), period_label
 
 
-def _build_weekly_period(now_msk: datetime) -> tuple[int, int, str]:
-    # В субботу 00:01 MSK берём интервал от прошлой субботы 00:00 до текущей субботы 00:00.
-    week_end_msk = _start_of_msk_day(now_msk)
-    week_start_msk = week_end_msk - timedelta(days=7)
+def _build_weekly_period(now_ct: datetime) -> tuple[int, int, str]:
+    # Берём интервал до начала последнего часа пятницы по CT.
+    # То есть отчёт покрывает ровно завершившуюся торговую часть недели,
+    # не захватывая последний пятничный час, когда новых входов уже не будет.
+    week_end_ct = _start_of_ct_hour(now_ct)
+    week_start_ct = week_end_ct - timedelta(days=7)
+
+    week_start_msk = week_start_ct.astimezone(MSK_TZ)
+    week_end_msk = week_end_ct.astimezone(MSK_TZ)
+
     period_label = (
         f"MSK {_format_dt(week_start_msk)} → "
         f"{_format_dt(week_end_msk)}"
     )
-    return _utc_ts(week_start_msk), _utc_ts(week_end_msk), period_label
+    return _utc_ts(week_start_ct), _utc_ts(week_end_ct), period_label
 
 
 def _build_monthly_period(now_msk: datetime) -> tuple[int, int, str]:
@@ -242,6 +257,7 @@ async def trade_performance_summary_task(
         while True:
             now_utc = datetime.now(UTC)
             now_msk = now_utc.astimezone(MSK_TZ)
+            now_ct = now_utc.astimezone(CT_TZ)
 
             try:
                 if _is_daily_due(now_msk):
@@ -267,26 +283,22 @@ async def trade_performance_summary_task(
                         await _send_summary_to_targets(sender=sender, settings=settings, text=text)
                         last_daily_key = daily_key
 
-                if _is_weekly_due(now_msk):
-                    weekly_key = _start_of_msk_day(now_msk).strftime("%Y-W%W")
-
+                if _is_weekly_due(now_ct):
+                    weekly_key = _start_of_ct_hour(now_ct).strftime("%Y-%m-%d %H")
                     if weekly_key != last_weekly_key:
-                        start_ts, end_ts, period_label = _build_weekly_period(now_msk)
-
+                        start_ts, end_ts, period_label = _build_weekly_period(now_ct)
                         summary = _fetch_trade_summary(
                             db_path=settings.trade_db_path,
                             instrument_code=instrument_code,
                             start_ts=start_ts,
                             end_ts=end_ts,
                         )
-
                         text = _build_summary_text(
                             title="ИТОГИ ТОРГОВЛИ ЗА НЕДЕЛЮ",
                             instrument_code=instrument_code,
                             period_label=period_label,
                             summary=summary,
                         )
-
                         await _send_summary_to_targets(sender=sender, settings=settings, text=text)
                         last_weekly_key = weekly_key
 
