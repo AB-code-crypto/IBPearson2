@@ -131,10 +131,7 @@ class DecisionOrderExecutor:
                 event_type="SIGNAL_ACCEPTED",
                 snapshot=snapshot,
                 message=f"Получен торговый сигнал {decision}",
-                payload={
-                    # "decision_result": snapshot.decision_result,
-                    # "forecast_summary": snapshot.forecast_summary,
-                },
+                payload=None
             )
             self._sync_runtime_state(snapshot)
 
@@ -740,9 +737,7 @@ class DecisionOrderExecutor:
             forecast_negative_ratio=forecast_negative_ratio,
             forecast_mean_final_move=forecast_mean_final_move,
             forecast_median_final_move=forecast_median_final_move,
-            # decision_payload=snapshot.decision_result,
             decision_payload=None,
-            # forecast_summary=snapshot.forecast_summary,
             forecast_summary=strategy_params_snapshot,
         )
 
