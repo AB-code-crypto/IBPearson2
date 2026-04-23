@@ -18,6 +18,7 @@ from trading.trade_store import (
     mark_trade_error,
     upsert_trade_runtime_state,
 )
+from ts.ts_config import TradingHalfHourMode
 
 logger = get_logger(__name__)
 
@@ -27,8 +28,17 @@ class DecisionOrderState:
     position_side: Optional[str] = None
     position_qty: int = 0
     current_trade_id: Optional[int] = None
-    entry_hour_start_ts: Optional[int] = None
-    last_entry_attempt_hour_start_ts: Optional[int] = None
+    # Начало 30-минутного торгового слота, в котором была открыта текущая позиция.
+    # Примеры:
+    #   09:00:00 -> слот 09:00:00
+    #   09:17:35 -> слот 09:00:00
+    #   09:30:00 -> слот 09:30:00
+    #   09:48:10 -> слот 09:30:00
+    entry_slot_start_ts: Optional[int] = None
+
+    # Начало 30-минутного слота, в котором уже была попытка входа.
+    # Нужен для защиты от повторного входа в тот же самый получасовой слот.
+    last_entry_attempt_slot_start_ts: Optional[int] = None
 
 
 class DecisionOrderExecutor:
@@ -71,13 +81,71 @@ class DecisionOrderExecutor:
             position_side=position_side,
             position_qty=position_qty,
             current_trade_id=current_trade_id,
-            entry_hour_start_ts=entry_hour_start_ts,
-            last_entry_attempt_hour_start_ts=entry_hour_start_ts,
+            entry_slot_start_ts=entry_hour_start_ts,
+            last_entry_attempt_slot_start_ts=entry_hour_start_ts,
         )
 
     def reset_in_memory_state(self):
         """Полностью очищаем внутреннее торговое состояние executor."""
         self.state = DecisionOrderState()
+
+    def _get_snapshot_slot_start_ts(self, snapshot) -> Optional[int]:
+        """
+        Возвращает начало 30-минутного торгового слота для текущего snapshot.
+
+        Правила:
+          - minute 00..29 -> начало слота на :00
+          - minute 30..59 -> начало слота на :30
+
+        Используем timestamp snapshot, а не hour_start_ts, потому что hour_start_ts
+        одинаков для обеих половин часа и не позволяет различать два получасовых слота.
+        """
+        snapshot_ts = getattr(snapshot, "snapshot_ts", None)
+        if snapshot_ts is None:
+            snapshot_ts = getattr(snapshot, "timestamp", None)
+        if snapshot_ts is None:
+            return None
+
+        # Если timestamp уже пришёл как unix-ts/int/float.
+        if isinstance(snapshot_ts, (int, float)):
+            dt = datetime.fromtimestamp(snapshot_ts)
+        else:
+            # Ожидаем datetime-объект.
+            dt = snapshot_ts
+
+        if dt.minute < 30:
+            slot_dt = dt.replace(minute=0, second=0, microsecond=0)
+        else:
+            slot_dt = dt.replace(minute=30, second=0, microsecond=0)
+
+        return int(slot_dt.timestamp())
+
+    def _is_half_hour_slot_allowed(self, snapshot) -> bool:
+        """
+        Проверяет, разрешён ли текущий 30-минутный слот согласно trading_half_hour_mode.
+        """
+        snapshot_ts = getattr(snapshot, "snapshot_ts", None)
+        if snapshot_ts is None:
+            snapshot_ts = getattr(snapshot, "timestamp", None)
+        if snapshot_ts is None:
+            return False
+
+        if isinstance(snapshot_ts, (int, float)):
+            dt = datetime.fromtimestamp(snapshot_ts)
+        else:
+            dt = snapshot_ts
+
+        is_first_half = dt.minute < 30
+        mode = self.settings.trading_half_hour_mode
+
+        if mode == TradingHalfHourMode.ANY_HALF:
+            return True
+        if mode == TradingHalfHourMode.FIRST_HALF_ONLY:
+            return is_first_half
+        if mode == TradingHalfHourMode.SECOND_HALF_ONLY:
+            return not is_first_half
+
+        return False
 
     async def close(self):
         await self.telegram_notifier.close()
@@ -125,7 +193,8 @@ class DecisionOrderExecutor:
             return
 
         decision = snapshot.decision_result["decision"]
-        self.state.last_entry_attempt_hour_start_ts = snapshot.hour_start_ts
+        slot_start_ts = self._get_snapshot_slot_start_ts(snapshot)
+        self.state.last_entry_attempt_slot_start_ts = slot_start_ts
 
         local_symbol = self._get_active_local_symbol(active_futures)
         order_ref = self._build_entry_order_ref(snapshot=snapshot, decision=decision)
@@ -246,7 +315,7 @@ class DecisionOrderExecutor:
 
             clear_trade_runtime_state(self.trade_db_path, self.instrument_code)
             self.state = DecisionOrderState(
-                last_entry_attempt_hour_start_ts=snapshot.hour_start_ts,
+                last_entry_attempt_slot_start_ts=self._get_snapshot_slot_start_ts(snapshot),
             )
         except Exception as exc:
             self._handle_exit_error(
@@ -266,6 +335,7 @@ class DecisionOrderExecutor:
 
         if not snapshot.decision_calculated:
             return False
+
         if snapshot.decision_result is None:
             return False
 
@@ -273,10 +343,14 @@ class DecisionOrderExecutor:
         if decision not in ("LONG", "SHORT"):
             return False
 
-        if self.state.last_entry_attempt_hour_start_ts == snapshot.hour_start_ts:
+        if not self._is_half_hour_slot_allowed(snapshot):
             return False
 
-        if self._is_friday_last_trading_hour(snapshot):
+        slot_start_ts = self._get_snapshot_slot_start_ts(snapshot)
+        if slot_start_ts is None:
+            return False
+
+        if self.state.last_entry_attempt_slot_start_ts == slot_start_ts:
             return False
 
         return True
@@ -332,20 +406,27 @@ class DecisionOrderExecutor:
     def _should_exit(self, snapshot) -> bool:
         if self.state.position_side is None:
             return False
-        if self.state.entry_hour_start_ts is None:
+
+        if self.state.entry_slot_start_ts is None:
             return False
 
         # Пустой/неинициализированный snapshot не должен закрывать позицию.
-        if snapshot.hour_start_ts is None:
+        if getattr(snapshot, "hour_start_ts", None) is None:
             return False
 
-        if snapshot.hour_start_ts == self.state.entry_hour_start_ts:
+        current_slot_start_ts = self._get_snapshot_slot_start_ts(snapshot)
+        if current_slot_start_ts is None:
+            return False
+
+        # Пока мы внутри того же получасового слота, выходим по обычному bar-index.
+        if current_slot_start_ts == self.state.entry_slot_start_ts:
             return (
                     snapshot.current_bar_index is not None
                     and snapshot.current_bar_index >= self.exit_bar_index
             )
 
-        return snapshot.hour_start_ts != self.state.entry_hour_start_ts
+        # Как только слот сменился — позицию надо закрыть.
+        return current_slot_start_ts != self.state.entry_slot_start_ts
 
     async def _place_entry_market_order(self, *, contract, decision, order_ref):
         if decision == "LONG":
