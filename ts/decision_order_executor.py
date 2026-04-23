@@ -74,15 +74,35 @@ class DecisionOrderExecutor:
             current_trade_id,
             position_side,
             position_qty,
-            entry_hour_start_ts,
+            entry_slot_start_ts=None,
+            entry_hour_start_ts=None,
     ):
-        """Загружаем восстановленное состояние из recovery/reconcile слоя."""
+        """
+        Загружаем восстановленное состояние из recovery/reconcile слоя.
+
+        Поддерживаем оба варианта входа:
+        - entry_slot_start_ts: уже нормализованный старт 30-минутного слота;
+        - entry_hour_start_ts: старый формат, который дополнительно нормализуем до слота.
+
+        Приоритет у entry_slot_start_ts.
+        """
+        source_ts = entry_slot_start_ts
+        if source_ts is None:
+            source_ts = entry_hour_start_ts
+
+        if source_ts is None:
+            raise ValueError(
+                "hydrate_recovered_state requires entry_slot_start_ts or entry_hour_start_ts"
+            )
+
+        normalized_slot_start_ts = self._get_slot_start_ts_from_ts(int(source_ts))
+
         self.state = DecisionOrderState(
             position_side=position_side,
             position_qty=position_qty,
             current_trade_id=current_trade_id,
-            entry_slot_start_ts=entry_hour_start_ts,
-            last_entry_attempt_slot_start_ts=entry_hour_start_ts,
+            entry_slot_start_ts=normalized_slot_start_ts,
+            last_entry_attempt_slot_start_ts=normalized_slot_start_ts,
         )
 
     def reset_in_memory_state(self):
