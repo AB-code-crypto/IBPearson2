@@ -126,7 +126,39 @@ def calc_path_efficiency(values):
         net_move=net_move,
         diff_values=diff_values,
     )
+def calc_diff_pearson(diff_values_a, diff_values_b):
+    # Pearson по первым разностям.
+    return calc_pearson_corr(diff_values_a, diff_values_b)
 
+
+def calc_diff_sign_match_ratio(diff_values_a, diff_values_b):
+    # Доля совпадений знаков первых разностей.
+    if len(diff_values_a) != len(diff_values_b):
+        raise ValueError(
+            f"Длины diff-рядов не совпадают: "
+            f"len(diff_values_a)={len(diff_values_a)}, "
+            f"len(diff_values_b)={len(diff_values_b)}"
+        )
+
+    if not diff_values_a:
+        return 0.0
+
+    matched = 0
+    total = 0
+
+    for value_a, value_b in zip(diff_values_a, diff_values_b):
+        sign_a = 1 if value_a > 0.0 else (-1 if value_a < 0.0 else 0)
+        sign_b = 1 if value_b > 0.0 else (-1 if value_b < 0.0 else 0)
+
+        if sign_a == sign_b:
+            matched += 1
+
+        total += 1
+
+    if total == 0:
+        return 0.0
+
+    return matched / total
 
 def calc_pearson_corr(values_a, values_b):
     # Считаем коэффициент корреляции Пирсона для двух рядов одинаковой длины.
