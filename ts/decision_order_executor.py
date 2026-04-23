@@ -904,7 +904,7 @@ class DecisionOrderExecutor:
             current_trade_id=self.state.current_trade_id,
             position_side=self.state.position_side,
             position_qty=self.state.position_qty,
-            entry_hour_start_ts=self.state.entry_hour_start_ts,
+            entry_hour_start_ts=self.state.entry_slot_start_ts,
             entry_hour_start_ts_ct=entry_hour_start_ts_ct,
             entry_hour_start_ct=entry_hour_start_ct,
             broker_position_qty=self.state.position_qty,
