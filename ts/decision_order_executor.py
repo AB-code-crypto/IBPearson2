@@ -120,6 +120,16 @@ class DecisionOrderExecutor:
 
         return int(slot_dt.timestamp())
 
+    def _get_slot_start_ts_from_ts(self, ts: int) -> int:
+        dt = datetime.fromtimestamp(ts)
+
+        if dt.minute < 30:
+            slot_dt = dt.replace(minute=0, second=0, microsecond=0)
+        else:
+            slot_dt = dt.replace(minute=30, second=0, microsecond=0)
+
+        return int(slot_dt.timestamp())
+
     def _is_half_hour_slot_allowed(self, snapshot) -> bool:
         """
         Проверяет, разрешён ли текущий 30-минутный слот согласно trading_half_hour_mode.
@@ -208,7 +218,7 @@ class DecisionOrderExecutor:
                 pearson_live_runtime=pearson_live_runtime,
             )
             self.state.current_trade_id = trade_id
-            self.state.entry_hour_start_ts = snapshot.hour_start_ts
+            self.state.entry_slot_start_ts = slot_start_ts
 
             self._append_event(
                 trade_id=trade_id,
@@ -376,12 +386,14 @@ class DecisionOrderExecutor:
 
         current_trade_id = int(open_trade["trade_id"])
         entry_hour_start_ts = open_trade["signal_hour_start_ts"]
+        entry_slot_start_ts = self._get_slot_start_ts_from_ts(entry_hour_start_ts)
 
-        self.hydrate_recovered_state(
-            current_trade_id=current_trade_id,
+        self.state = DecisionOrderState(
             position_side=position_side,
             position_qty=position_qty,
-            entry_hour_start_ts=entry_hour_start_ts,
+            current_trade_id=current_trade_id,
+            entry_slot_start_ts=entry_slot_start_ts,
+            last_entry_attempt_slot_start_ts=entry_slot_start_ts,
         )
 
     def _is_friday_last_trading_hour(self, snapshot) -> bool:
@@ -661,7 +673,7 @@ class DecisionOrderExecutor:
         self.state.current_trade_id = None
         self.state.position_side = None
         self.state.position_qty = 0
-        self.state.entry_hour_start_ts = None
+        self.state.entry_slot_start_ts = None
 
         log_warning(
             logger,
@@ -779,7 +791,7 @@ class DecisionOrderExecutor:
         return (
             f"{self.order_ref_prefix}_"
             f"{self.instrument_code}_"
-            f"{self.state.entry_hour_start_ts}_"
+            f"{self.state.entry_slot_start_ts}_"
             f"EXIT_{self.state.position_side}"
         )
 
@@ -882,7 +894,7 @@ class DecisionOrderExecutor:
 
         entry_hour_start_ts_ct = None
         entry_hour_start_ct = None
-        if self.state.entry_hour_start_ts == snapshot.hour_start_ts:
+        if self.state.entry_slot_start_ts == self._get_snapshot_slot_start_ts(snapshot):
             entry_hour_start_ts_ct = snapshot.hour_start_ts_ct
             entry_hour_start_ct = snapshot.hour_start_ct
 
