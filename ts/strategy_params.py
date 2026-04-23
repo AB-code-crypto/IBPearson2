@@ -21,6 +21,7 @@ class StrategyParams:
     pearson_shortlist_min_correlation: float = ts_config.PEARSON_SHORTLIST_MIN_CORRELATION
     pearson_shortlist_top_n: int = ts_config.PEARSON_SHORTLIST_TOP_N
     pearson_min_shortlist: int = ts_config.PEARSON_MIN_SHORTLIST
+    trading_half_hour_mode: ts_config.TradingHalfHourMode = ts_config.TradingHalfHourMode.SECOND_HALF_ONLY
 
     # ============================================================
     # Similarity weights

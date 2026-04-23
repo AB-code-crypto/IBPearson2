@@ -1,22 +1,4 @@
-# Настройки первого шага стратегии по корреляции Пирсона.
-#
-# Здесь храним именно стратегические параметры:
-# - когда внутри часа разрешён поиск корреляции;
-# - с каким шагом идут бары;
-# - сколько баров в одном часу.
-#
-# Временное окно задаём минутами часа, а не количеством баров.
-# Это делает настройки прозрачнее.
-#
-# Важно:
-# - PEARSON_EVAL_START_MINUTE включается;
-# - PEARSON_EVAL_END_MINUTE используется как правая граница "не включая".
-#
-# Значения по умолчанию:
-# - старт поиска после первых 30 минут часа;
-# - остановка поиска после первых 50 минут часа.
-#
-# Итого получаем окно длиной ровно 20 минут.
+from enum import Enum
 
 PEARSON_BAR_INTERVAL_SECONDS = 5
 PEARSON_HOUR_SECONDS = 3600
@@ -24,6 +6,12 @@ PEARSON_HOUR_BAR_COUNT = PEARSON_HOUR_SECONDS // PEARSON_BAR_INTERVAL_SECONDS
 
 PEARSON_EVAL_START_MINUTE = 30
 PEARSON_EVAL_END_MINUTE = 50
+
+
+class TradingHalfHourMode(str, Enum):
+    FIRST_HALF_ONLY = "FIRST_HALF_ONLY"
+    SECOND_HALF_ONLY = "SECOND_HALF_ONLY"
+    ANY_HALF = "ANY_HALF"
 
 
 def pearson_bars_per_minute():
