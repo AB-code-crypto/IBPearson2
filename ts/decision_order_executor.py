@@ -725,17 +725,7 @@ class DecisionOrderExecutor:
         if best_similarity_score is not None:
             best_similarity_text = f"{best_similarity_score:.4f}"
 
-        best_similarity_score = None
-        if snapshot.ranked_similarity_candidates:
-            best_similarity_score = snapshot.ranked_similarity_candidates[0]["final_score"]
-
-        forecast_candidate_count = 0
-        if snapshot.forecast_summary is not None:
-            forecast_candidate_count = int(snapshot.forecast_summary.get("candidate_count") or 0)
-
-        best_similarity_text = "-"
-        if best_similarity_score is not None:
-            best_similarity_text = f"{best_similarity_score:.4f}"
+        entry_slot_label = self._format_slot_label(self.state.entry_slot_start_ts)
 
         log_info(
             logger,
@@ -743,6 +733,7 @@ class DecisionOrderExecutor:
                 f"TRADE ENTRY | "
                 f"trade_id={trade_id} | "
                 f"decision={decision} | "
+                f"entry_slot={entry_slot_label} | "
                 f"hour_ct={snapshot.hour_start_ct} | "
                 f"bar_index={snapshot.current_bar_index} | "
                 f"qty={self.quantity} | "
@@ -755,6 +746,9 @@ class DecisionOrderExecutor:
         )
 
     def _log_exit_success(self, *, trade_id, snapshot, exit_side, placement):
+        entry_slot_label = self._format_slot_label(self.state.entry_slot_start_ts)
+        current_slot_label = self._format_slot_label(self._get_snapshot_slot_start_ts(snapshot))
+
         log_info(
             logger,
             (
@@ -762,6 +756,8 @@ class DecisionOrderExecutor:
                 f"trade_id={trade_id} | "
                 f"entry_side={self.state.position_side} | "
                 f"exit_side={exit_side} | "
+                f"entry_slot={entry_slot_label} | "
+                f"exit_slot={current_slot_label} | "
                 f"hour_ct={snapshot.hour_start_ct} | "
                 f"bar_index={snapshot.current_bar_index} | "
                 f"qty={self.state.position_qty} | "
@@ -948,6 +944,14 @@ class DecisionOrderExecutor:
         if ts is None:
             return None
         return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    def _format_slot_label(self, slot_start_ts):
+        if slot_start_ts is None:
+            return "-"
+
+        dt = datetime.fromtimestamp(slot_start_ts)
+        half_label = "FIRST_HALF" if dt.minute == 0 else "SECOND_HALF"
+        return f"{dt.strftime('%H:%M')} ({half_label})"
 
     def _get_active_local_symbol(self, active_futures):
         if self.instrument_code not in active_futures:
