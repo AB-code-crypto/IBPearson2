@@ -4,21 +4,13 @@ from core.db_sql import (
 
 
 def build_prepared_hour_payload(rows):
-    # Преобразуем строки одного prepared-часа
+    # Преобразуем строки одного prepared analysis window
     # в удобную Python-структуру.
     #
-    # Возвращаем dict:
-    # {
-    #     "hour_start_ts": ...,
-    #     "hour_start": ...,
-    #     "hour_slot": ...,
-    #     "contract": ...,
-    #     "y": [...],
-    #     "sum_y": [...],
-    #     "sum_y2": [...],
-    # }
+    # Названия ключей hour_* соответствуют текущей схеме БД.
+    # По смыслу это start 60-минутного окна анализа.
     if not rows:
-        raise ValueError("Нельзя построить prepared hour payload: rows пустой")
+        raise ValueError("Нельзя построить prepared payload: rows пустой")
 
     first_row = rows[0]
 
@@ -41,9 +33,20 @@ def build_prepared_hour_payload(rows):
     return payload
 
 
-def load_prepared_hours_by_slots(prepared_conn, table_name, hour_slots_ct, before_hour_start_ts_ct=None):
-    # Загружаем все prepared-часы для списка CT-slot одним SQL-запросом
+def load_prepared_hours_by_slots(
+        prepared_conn,
+        table_name,
+        hour_slots_ct,
+        before_hour_start_ts_ct=None,
+        analysis_window_start_offset_seconds=0,
+):
+    # Загружаем prepared analysis windows для списка CT-hour slots одним SQL-запросом
     # и группируем их в Python по hour_start_ts.
+    #
+    # analysis_window_start_offset_seconds:
+    # - 0    -> окна HH:00..HH+1:00;
+    # - 1800 -> окна HH:30..HH+1:30;
+    # - None -> без фильтра по offset, используется только для диагностики/утилит.
     if not hour_slots_ct:
         return []
 
@@ -52,7 +55,13 @@ def load_prepared_hours_by_slots(prepared_conn, table_name, hour_slots_ct, befor
         slot_count=len(hour_slots_ct),
     )
 
-    params = [*hour_slots_ct, before_hour_start_ts_ct, before_hour_start_ts_ct]
+    params = [
+        *hour_slots_ct,
+        before_hour_start_ts_ct,
+        before_hour_start_ts_ct,
+        analysis_window_start_offset_seconds,
+        analysis_window_start_offset_seconds,
+    ]
 
     cursor = prepared_conn.execute(sql, params)
     rows = cursor.fetchall()

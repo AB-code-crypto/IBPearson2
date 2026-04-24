@@ -6,11 +6,15 @@ from typing import Optional
 from contracts import Instrument
 from core.db_initializer import build_table_name
 from ts.prepared_builder import (
-    build_prepared_rows_for_one_hour,
-    hour_start_text_from_ts,
+    analysis_window_start_text_from_ts,
+    build_prepared_rows_for_analysis_window,
     insert_prepared_rows,
-    prepared_hour_row_count,
+    prepared_analysis_window_row_count,
 )
+
+HALF_HOUR_SECONDS = 1800
+ANALYSIS_WINDOW_SECONDS = 3600
+PREPARED_WINDOW_ROW_COUNT = 720
 
 
 @dataclass
@@ -20,79 +24,93 @@ class PreparedSyncStats:
     table_name: str
     window_start_ts: Optional[int]
     window_end_ts: Optional[int]
-    candidate_hours: int
-    inserted_hours: int
-    skipped_existing_hours: int
-    skipped_invalid_hours: int
+    candidate_windows: int
+    inserted_windows: int
+    skipped_existing_windows: int
+    skipped_invalid_windows: int
 
 
-def floor_to_hour_ts(ts):
-    # Округляем Unix timestamp вниз до точного начала часа.
-    return (ts // 3600) * 3600
+def floor_to_half_hour_ts(ts):
+    # Округляем Unix timestamp вниз до точной 30-минутной границы.
+    return (ts // HALF_HOUR_SECONDS) * HALF_HOUR_SECONDS
 
 
-def load_candidate_hour_starts(price_conn, table_name, start_hour_ts=None, end_hour_ts=None):
-    # Загружаем список всех candidate hour_start_ts, где в price DB
-    # есть хотя бы один бар.
+def load_candidate_analysis_window_starts(
+        price_conn,
+        table_name,
+        start_analysis_window_ts=None,
+        end_analysis_window_ts=None,
+):
+    # Загружаем список всех candidate analysis_window_start_ts,
+    # где в price DB есть хотя бы один бар соответствующего 30-минутного bucket.
     #
-    # start_hour_ts и end_hour_ts трактуются как границы по bar_time_ts:
-    # - start_hour_ts включительно
-    # - end_hour_ts не включительно
+    # Дальше каждое окно жёстко валидируется на наличие полных 720 баров.
     #
-    # Такой подход удобен и для ручной массовой подготовки, и для фоновой
-    # синхронизации последних закрытых часов.
+    # start_analysis_window_ts и end_analysis_window_ts задают диапазон именно
+    # для start окна анализа:
+    # - start включительно;
+    # - end не включительно.
     sql = f"""
     SELECT DISTINCT
-        CAST(bar_time_ts / 3600 AS INTEGER) * 3600 AS hour_start_ts
+        CAST(bar_time_ts / {HALF_HOUR_SECONDS} AS INTEGER) * {HALF_HOUR_SECONDS}
+            AS analysis_window_start_ts
     FROM {table_name}
     WHERE (? IS NULL OR bar_time_ts >= ?)
       AND (? IS NULL OR bar_time_ts < ?)
-    ORDER BY hour_start_ts
+    ORDER BY analysis_window_start_ts
     ;
     """
 
     cursor = price_conn.execute(
         sql,
         (
-            start_hour_ts, start_hour_ts,
-            end_hour_ts, end_hour_ts,
+            start_analysis_window_ts,
+            start_analysis_window_ts,
+            end_analysis_window_ts,
+            end_analysis_window_ts,
         )
     )
 
     rows = cursor.fetchall()
-
     return [row[0] for row in rows]
 
 
-def build_recent_closed_hours_window(now_ts, lookback_days):
-    # Строим окно последних закрытых часов.
+def build_recent_closed_analysis_windows_range(now_ts, lookback_days):
+    # Строим диапазон последних закрытых 60-минутных окон анализа.
     #
     # Важное правило:
-    # текущий открытый час в prepared DB не готовим.
+    # текущее ещё не закрытое analysis window в prepared DB не готовим.
     #
-    # Поэтому правая граница окна - это начало текущего часа UTC.
-    # Она не включается в SQL-фильтр.
-    current_hour_start_ts = floor_to_hour_ts(now_ts)
-    start_hour_ts = current_hour_start_ts - (lookback_days * 24 * 3600)
-    end_hour_ts = current_hour_start_ts
+    # Последнее закрытое окно анализа имеет start:
+    #   floor_to_half_hour(now_ts) - 3600
+    #
+    # Так как правая граница диапазона exclusive, используем:
+    #   floor_to_half_hour(now_ts) - 1800
+    current_half_hour_start_ts = floor_to_half_hour_ts(now_ts)
+    end_analysis_window_ts = current_half_hour_start_ts - HALF_HOUR_SECONDS
+    start_analysis_window_ts = end_analysis_window_ts - (lookback_days * 24 * 3600)
 
-    return start_hour_ts, end_hour_ts
+    return start_analysis_window_ts, end_analysis_window_ts
 
 
-def sync_prepared_hours_for_range(
+def sync_prepared_analysis_windows_for_range(
         settings,
         instrument_code,
-        start_hour_ts=None,
-        end_hour_ts=None,
+        start_analysis_window_ts=None,
+        end_analysis_window_ts=None,
         verbose=False,
 ):
-    # Массовая синхронизация prepared DB по заданному окну.
+    # Массовая синхронизация prepared DB по заданному диапазону 60-минутных окон.
     #
-    # Логика очень простая:
-    # 1) находим candidate-часы в price DB;
-    # 2) если часа уже нетронуто и полностью нет в prepared DB - строим его;
-    # 3) если час уже есть целиком - пропускаем;
-    # 4) если час невалиден - пропускаем.
+    # Окна стартуют каждые 30 минут:
+    # - HH:00..HH+1:00;
+    # - HH:30..HH+1:30.
+    #
+    # Логика:
+    # 1) находим candidate analysis windows в price DB;
+    # 2) если окна ещё нет в prepared DB — строим его;
+    # 3) если окно уже есть целиком — пропускаем;
+    # 4) если окно невалидно — пропускаем.
     instrument_row = Instrument[instrument_code]
 
     table_name = build_table_name(
@@ -109,59 +127,61 @@ def sync_prepared_hours_for_range(
         price_conn.execute("PRAGMA busy_timeout=5000;")
         prepared_conn.execute("PRAGMA busy_timeout=5000;")
 
-        candidate_hour_starts = load_candidate_hour_starts(
+        candidate_window_starts = load_candidate_analysis_window_starts(
             price_conn=price_conn,
             table_name=table_name,
-            start_hour_ts=start_hour_ts,
-            end_hour_ts=end_hour_ts,
+            start_analysis_window_ts=start_analysis_window_ts,
+            end_analysis_window_ts=end_analysis_window_ts,
         )
 
-        inserted_hours = 0
-        skipped_existing_hours = 0
-        skipped_invalid_hours = 0
+        inserted_windows = 0
+        skipped_existing_windows = 0
+        skipped_invalid_windows = 0
 
-        total_hours = len(candidate_hour_starts)
+        total_windows = len(candidate_window_starts)
 
-        for index, hour_start_ts in enumerate(candidate_hour_starts, start=1):
-            hour_start_text = hour_start_text_from_ts(hour_start_ts)
-
-            existing_row_count = prepared_hour_row_count(
-                prepared_conn=prepared_conn,
-                table_name=table_name,
-                hour_start_ts=hour_start_ts,
+        for index, analysis_window_start_ts in enumerate(candidate_window_starts, start=1):
+            analysis_window_start_text = analysis_window_start_text_from_ts(
+                analysis_window_start_ts
             )
 
-            if existing_row_count == 720:
-                skipped_existing_hours += 1
+            existing_row_count = prepared_analysis_window_row_count(
+                prepared_conn=prepared_conn,
+                table_name=table_name,
+                analysis_window_start_ts=analysis_window_start_ts,
+            )
+
+            if existing_row_count == PREPARED_WINDOW_ROW_COUNT:
+                skipped_existing_windows += 1
 
                 if verbose:
                     print(
-                        f"[{index}/{total_hours}] "
-                        f"{hour_start_text} UTC -> уже есть в prepared DB, пропускаю"
+                        f"[{index}/{total_windows}] "
+                        f"{analysis_window_start_text} UTC -> уже есть в prepared DB, пропускаю"
                     )
 
                 continue
 
             if existing_row_count != 0:
                 raise ValueError(
-                    f"В prepared DB найден частично записанный час: "
-                    f"{hour_start_text} UTC, row_count={existing_row_count}. "
-                    f"Ожидалось либо 0, либо 720."
+                    f"В prepared DB найдено частично записанное окно анализа: "
+                    f"{analysis_window_start_text} UTC, row_count={existing_row_count}. "
+                    f"Ожидалось либо 0, либо {PREPARED_WINDOW_ROW_COUNT}."
                 )
 
             try:
-                prepared_rows = build_prepared_rows_for_one_hour(
+                prepared_rows = build_prepared_rows_for_analysis_window(
                     price_conn=price_conn,
                     table_name=table_name,
-                    hour_start_ts=hour_start_ts,
+                    analysis_window_start_ts=analysis_window_start_ts,
                 )
             except ValueError as exc:
-                skipped_invalid_hours += 1
+                skipped_invalid_windows += 1
 
                 if verbose:
                     print(
-                        f"[{index}/{total_hours}] "
-                        f"{hour_start_text} UTC -> пропускаю, час невалиден: {exc}"
+                        f"[{index}/{total_windows}] "
+                        f"{analysis_window_start_text} UTC -> пропускаю, окно невалидно: {exc}"
                     )
 
                 continue
@@ -172,23 +192,24 @@ def sync_prepared_hours_for_range(
                 prepared_rows=prepared_rows,
             )
 
-            inserted_hours += 1
+            inserted_windows += 1
 
             if verbose:
                 print(
-                    f"[{index}/{total_hours}] "
-                    f"{hour_start_text} UTC -> вставлено 720 строк"
+                    f"[{index}/{total_windows}] "
+                    f"{analysis_window_start_text} UTC -> вставлено "
+                    f"{PREPARED_WINDOW_ROW_COUNT} строк"
                 )
 
         return PreparedSyncStats(
             instrument_code=instrument_code,
             table_name=table_name,
-            window_start_ts=start_hour_ts,
-            window_end_ts=end_hour_ts,
-            candidate_hours=total_hours,
-            inserted_hours=inserted_hours,
-            skipped_existing_hours=skipped_existing_hours,
-            skipped_invalid_hours=skipped_invalid_hours,
+            window_start_ts=start_analysis_window_ts,
+            window_end_ts=end_analysis_window_ts,
+            candidate_windows=total_windows,
+            inserted_windows=inserted_windows,
+            skipped_existing_windows=skipped_existing_windows,
+            skipped_invalid_windows=skipped_invalid_windows,
         )
 
     finally:
@@ -196,7 +217,7 @@ def sync_prepared_hours_for_range(
         prepared_conn.close()
 
 
-def sync_recent_prepared_hours(
+def sync_recent_prepared_analysis_windows(
         settings,
         instrument_code,
         lookback_days=31,
@@ -205,19 +226,20 @@ def sync_recent_prepared_hours(
 ):
     # Удобная обёртка для боевого режима.
     #
-    # Берём только последние lookback_days дней и только уже закрытые часы.
+    # Берём последние lookback_days дней и только уже закрытые 60-минутные
+    # analysis windows со стартом на HH:00 или HH:30.
     if now_ts is None:
         now_ts = int(datetime.now(timezone.utc).timestamp())
 
-    start_hour_ts, end_hour_ts = build_recent_closed_hours_window(
+    start_analysis_window_ts, end_analysis_window_ts = build_recent_closed_analysis_windows_range(
         now_ts=now_ts,
         lookback_days=lookback_days,
     )
 
-    return sync_prepared_hours_for_range(
+    return sync_prepared_analysis_windows_for_range(
         settings=settings,
         instrument_code=instrument_code,
-        start_hour_ts=start_hour_ts,
-        end_hour_ts=end_hour_ts,
+        start_analysis_window_ts=start_analysis_window_ts,
+        end_analysis_window_ts=end_analysis_window_ts,
         verbose=verbose,
     )

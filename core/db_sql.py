@@ -352,15 +352,20 @@ def select_prepared_hour_rows_sql(table_name):
 
 
 def select_prepared_rows_by_slots_sql(table_name, slot_count):
-    # Все строки всех prepared-часов по списку hour_slot_ct.
+    # Все строки всех prepared analysis windows по списку hour_slot_ct.
     #
-    # Это основная быстрая выборка для runtime:
-    # одним запросом читаем все исторические часы нужных CT-slot,
-    # затем группируем в Python по hour_start_ts.
+    # Prepared DB теперь может хранить 60-минутные окна анализа со стартом:
+    # - HH:00;
+    # - HH:30.
+    #
+    # analysis_window_start_offset_seconds:
+    # - 0    -> выбрать только окна HH:00..HH+1:00;
+    # - 1800 -> выбрать только окна HH:30..HH+1:30;
+    # - NULL -> не фильтровать по offset.
     #
     # before_hour_start_ts_ct:
-    # - если NULL, ограничение не применяется
-    # - если задан, возвращаем только часы строго раньше него по CT-оси
+    # - если NULL, ограничение не применяется;
+    # - если задан, возвращаем только окна строго раньше него по CT-оси.
     placeholders = ", ".join(["?"] * slot_count)
 
     return f"""
@@ -377,6 +382,7 @@ def select_prepared_rows_by_slots_sql(table_name, slot_count):
     FROM {table_name}
     WHERE hour_slot_ct IN ({placeholders})
       AND (? IS NULL OR hour_start_ts_ct < ?)
+      AND (? IS NULL OR (hour_start_ts_ct % 3600) = ?)
     ORDER BY hour_start_ts_ct, bar_index
     ;
     """

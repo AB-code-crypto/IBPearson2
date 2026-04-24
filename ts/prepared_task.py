@@ -2,25 +2,32 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 from core.logger import get_logger, log_info
-from ts.prepared_sync import sync_recent_prepared_hours
+from ts.prepared_sync import sync_recent_prepared_analysis_windows
 
 logger = get_logger(__name__)
 
 
-
 def next_prepared_sync_dt_utc(now_utc):
-    # Возвращаем момент следующего запуска в hh:01:00 UTC.
-    next_run_utc = now_utc.replace(minute=1, second=0, microsecond=0)
+    # Возвращаем момент следующего запуска prepared-sync.
+    #
+    # Prepared DB теперь хранит 60-минутные analysis windows со стартом каждые 30 минут,
+    # поэтому синхронизацию запускаем дважды в час:
+    # - HH:01:00 UTC;
+    # - HH:31:00 UTC.
+    current_hour_run_01 = now_utc.replace(minute=1, second=0, microsecond=0)
+    current_hour_run_31 = now_utc.replace(minute=31, second=0, microsecond=0)
 
-    if now_utc >= next_run_utc:
-        next_run_utc += timedelta(hours=1)
+    if now_utc < current_hour_run_01:
+        return current_hour_run_01
 
-    return next_run_utc
+    if now_utc < current_hour_run_31:
+        return current_hour_run_31
 
+    return current_hour_run_01 + timedelta(hours=1)
 
 
 def format_sync_window_text(stats):
-    # Формируем компактный текст окна, чтобы удобно писать его в лог.
+    # Формируем компактный текст диапазона prepared-sync для логов.
     if stats.window_start_ts is None:
         start_text = "-inf"
     else:
@@ -47,7 +54,7 @@ async def run_prepared_sync_once(settings, instrument_code, lookback_days):
     # синхронно внутри event loop, иначе подвиснут heartbeat, мониторинг и
     # обработка realtime-потока.
     stats = await asyncio.to_thread(
-        sync_recent_prepared_hours,
+        sync_recent_prepared_analysis_windows,
         settings,
         instrument_code,
         lookback_days,
@@ -61,10 +68,10 @@ async def run_prepared_sync_once(settings, instrument_code, lookback_days):
         logger,
         f"Prepared DB sync: instrument={stats.instrument_code}, "
         f"window={window_text}, "
-        f"candidate_hours={stats.candidate_hours}, "
-        f"inserted={stats.inserted_hours}, "
-        f"existing={stats.skipped_existing_hours}, "
-        f"invalid={stats.skipped_invalid_hours}",
+        f"candidate_windows={stats.candidate_windows}, "
+        f"inserted={stats.inserted_windows}, "
+        f"existing={stats.skipped_existing_windows}, "
+        f"invalid={stats.skipped_invalid_windows}",
         to_telegram=False,
     )
 
@@ -77,7 +84,7 @@ async def prepared_db_sync_task(settings, instrument_code="MNQ", lookback_days=3
     # Сценарий:
     # - если run_immediately=True, первый проход запускаем сразу;
     # - если run_immediately=False, первый немедленный проход пропускаем;
-    # - потом каждый час в hh:01:00 UTC.
+    # - потом каждые 30 минут в HH:01 и HH:31 UTC.
     log_info(
         logger,
         f"Запуск фоновой синхронизации prepared DB для {instrument_code}",
