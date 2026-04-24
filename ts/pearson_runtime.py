@@ -10,33 +10,28 @@ def text_from_local_axis_ts(local_axis_ts):
     return datetime.fromtimestamp(local_axis_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
-class PearsonCandidate:
-    # Один исторический prepared-час, который участвует в сравнении
-    # с текущим часом.
+class PearsonPreparedCandidate:
+    # Один historical prepared-кандидат: 60-минутное окно анализа,
+    # подготовленное заранее в prepared DB.
     #
-    # Здесь храним:
-    # - метаданные часа;
-    # - подготовленные массивы y / sum_y / sum_y2;
-    # - текущее runtime-состояние sum_xy и last_correlation.
-    def __init__(self, prepared_hour_payload):
-        self.hour_start_ts = prepared_hour_payload["hour_start_ts"]
-        self.hour_start_ts_ct = prepared_hour_payload["hour_start_ts_ct"]
-        self.hour_start_ct = prepared_hour_payload["hour_start_ct"]
-        self.hour_slot_ct = prepared_hour_payload["hour_slot_ct"]
-        self.contract = prepared_hour_payload["contract"]
+    # Поля hour_* здесь соответствуют текущей схеме prepared DB:
+    # в них лежит start 60-минутного analysis window, а не торгового слота.
+    def __init__(self, prepared_window_payload):
+        self.hour_start_ts = prepared_window_payload["hour_start_ts"]
+        self.hour_start_ts_ct = prepared_window_payload["hour_start_ts_ct"]
+        self.hour_start_ct = prepared_window_payload["hour_start_ct"]
+        self.hour_slot_ct = prepared_window_payload["hour_slot_ct"]
+        self.contract = prepared_window_payload["contract"]
 
-        self.y = prepared_hour_payload["y"]
-        self.sum_y = prepared_hour_payload["sum_y"]
-        self.sum_y2 = prepared_hour_payload["sum_y2"]
+        self.y = prepared_window_payload["y"]
+        self.sum_y = prepared_window_payload["sum_y"]
+        self.sum_y2 = prepared_window_payload["sum_y2"]
 
         self.sum_xy = 0.0
         self.last_correlation = None
 
     def initialize_sum_xy(self, current_x):
         # Полностью инициализируем sum_xy по уже накопленному префиксу current_x.
-        #
-        # Используется один раз в момент, когда мы впервые начинаем сравнение
-        # текущего часа с историческими кандидатами.
         self.sum_xy = 0.0
 
         for bar_index, x_value in enumerate(current_x):
@@ -49,8 +44,8 @@ class PearsonCandidate:
     def calculate_correlation(self, current_sum_x, current_sum_x2, current_n, current_bar_index):
         # Считаем коэффициент Пирсона на текущем префиксе.
         #
-        # По историческому часу берём уже готовые префиксные sum_y и sum_y2
-        # ровно на той же длине current_bar_index.
+        # По historical prepared-кандидату берём уже готовые префиксные
+        # sum_y и sum_y2 ровно на той же длине current_bar_index.
         sum_y = self.sum_y[current_bar_index]
         sum_y2 = self.sum_y2[current_bar_index]
 
@@ -78,25 +73,26 @@ class PearsonCandidate:
         return correlation
 
 
-class PearsonCurrentHour:
-    # Runtime-состояние текущего часа.
+class PearsonAnalysisWindow:
+    # Runtime-состояние текущего 60-минутного окна анализа.
     #
-    # Здесь храним:
-    # - технический UTC-якорь часа;
-    # - CT-время и CT-слот часа для стратегии;
-    # - базовую цену mid_open_0;
-    # - текущий ряд x;
-    # - sum_x;
-    # - sum_x2;
-    # - список исторических кандидатов;
-    # - флаг, что sum_xy уже инициализирован для кандидатов.
-    def __init__(self, hour_start_ts, hour_start_ts_ct):
-        self.hour_start_ts = hour_start_ts
-        self.hour_start_ts_ct = hour_start_ts_ct
+    # Окно анализа может начинаться:
+    # - в HH:00;
+    # - в HH:30.
+    #
+    # Вход в сделку ищется во второй половине этого окна:
+    # - 30..50 минута analysis window;
+    # - то есть первые 20 минут соответствующего торгового получаса.
+    def __init__(self, analysis_window_start_ts, analysis_window_start_ts_ct):
+        self.hour_start_ts = analysis_window_start_ts
+        self.hour_start_ts_ct = analysis_window_start_ts_ct
 
-        self.hour_start = datetime.fromtimestamp(hour_start_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        self.hour_start_ct = text_from_local_axis_ts(hour_start_ts_ct)
-        self.hour_slot_ct = (hour_start_ts_ct // 3600) % 24
+        self.hour_start = datetime.fromtimestamp(
+            analysis_window_start_ts,
+            tz=timezone.utc,
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        self.hour_start_ct = text_from_local_axis_ts(analysis_window_start_ts_ct)
+        self.hour_slot_ct = (analysis_window_start_ts_ct // 3600) % 24
 
         self.mid_open_0 = None
 
@@ -118,21 +114,14 @@ class PearsonCurrentHour:
         # Текущее число точек в префиксе.
         return len(self.x)
 
-    def can_start_comparison(self, min_bars=360):
-        # Можно ли уже начинать сравнение.
-        #
-        # По текущей логике:
-        # первые 30 минут ждём,
-        # после 360 баров начинаем сравнивать.
-        return len(self.x) >= min_bars
-
     def add_bar(self, ask_open, bid_open, ask_close, bid_close):
-        # Добавляем один новый завершённый 5-секундный бар текущего часа.
+        # Добавляем один новый завершённый 5-секундный бар
+        # текущего 60-минутного окна анализа.
         #
         # Формула:
         # x_i = mid_close_i / mid_open_0 - 1
         #
-        # mid_open_0 берём только из первого бара часа.
+        # mid_open_0 берём только из первого бара окна анализа.
         if self.mid_open_0 is None:
             self.mid_open_0 = (ask_open + bid_open) / 2.0
 
@@ -148,23 +137,21 @@ class PearsonCurrentHour:
 
         return x_value
 
-    def set_candidates(self, prepared_hours):
-        # Загружаем в runtime все исторические prepared-часы.
+    def set_candidates(self, prepared_windows):
+        # Загружаем в runtime все historical prepared-кандидаты.
         #
-        # prepared_hours - это список payload-объектов из prepared_reader.
+        # prepared_windows - список payload-объектов из prepared_reader.
         self.candidates = []
 
-        for prepared_hour_payload in prepared_hours:
-            candidate = PearsonCandidate(prepared_hour_payload)
+        for prepared_window_payload in prepared_windows:
+            candidate = PearsonPreparedCandidate(prepared_window_payload)
             self.candidates.append(candidate)
 
         self.candidates_initialized = False
 
     def initialize_candidates(self):
-        # Один раз инициализируем sum_xy по уже накопленному префиксу текущего часа.
-        #
-        # Это вызывается в момент первого старта сравнения,
-        # когда исторические кандидаты уже загружены.
+        # Один раз инициализируем sum_xy по уже накопленному префиксу
+        # текущего окна анализа.
         if not self.x:
             raise ValueError("Нельзя инициализировать кандидатов: текущий x пустой")
 
@@ -175,7 +162,7 @@ class PearsonCurrentHour:
 
     def update_candidates_for_last_bar(self):
         # После прихода нового бара инкрементально обновляем sum_xy
-        # у всех исторических кандидатов.
+        # у всех historical-кандидатов.
         if not self.candidates_initialized:
             raise ValueError("Кандидаты ещё не инициализированы")
 
