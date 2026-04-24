@@ -357,10 +357,10 @@ class TradeTelegramNotifier:
     def _build_entry_plot(self, *, snapshot, pearson_live_runtime, trade_id):
         if pearson_live_runtime is None:
             return None
-        if pearson_live_runtime.current_hour is None:
+        if pearson_live_runtime.current_analysis_window is None:
             return None
 
-        current_values = list(pearson_live_runtime.current_hour.x)
+        current_values = list(pearson_live_runtime.current_analysis_window.x)
         if not current_values:
             return None
 
@@ -369,7 +369,7 @@ class TradeTelegramNotifier:
             return None
 
         ranked_similarity_candidates = self._get_plot_candidates(snapshot)
-        prepared_hours_map = pearson_live_runtime.current_hour_prepared_hours_map
+        prepared_hours_map = pearson_live_runtime.current_analysis_window_prepared_hours_map
 
         output_path = self.output_dir / (
             f"trade_entry_{trade_id}_{snapshot.hour_start_ts}_{snapshot.current_bar_index}.png"
@@ -443,10 +443,10 @@ class TradeTelegramNotifier:
     def _build_promo_entry_plot(self, *, snapshot, pearson_live_runtime, trade_id):
         if pearson_live_runtime is None:
             return None
-        if pearson_live_runtime.current_hour is None:
+        if pearson_live_runtime.current_analysis_window is None:
             return None
 
-        current_values = list(pearson_live_runtime.current_hour.x)
+        current_values = list(pearson_live_runtime.current_analysis_window.x)
         if not current_values:
             return None
 

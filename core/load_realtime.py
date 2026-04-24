@@ -588,7 +588,7 @@ def build_relaxed_shortlist_counts(pearson_live_runtime):
     if pearson_live_runtime is None:
         return None
 
-    current_hour = pearson_live_runtime.current_hour
+    current_hour = pearson_live_runtime.current_analysis_window
     if current_hour is None:
         return None
 
