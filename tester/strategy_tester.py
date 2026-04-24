@@ -1146,7 +1146,7 @@ if __name__ == "__main__":
     # Для проверки эквивалентности старой логике оставь SECOND_HALF_ONLY.
     # Для новой торговли каждые полчаса поставь TradingHalfHourMode.ANY_HALF.
     param_specs = {
-        "trading_half_hour_mode": [TradingHalfHourMode.SECOND_HALF_ONLY],
+        "trading_half_hour_mode": [TradingHalfHourMode.ANY_HALF],
 
         "pearson_shortlist_min_correlation": [0.70],
         "pearson_shortlist_top_n": [30],
