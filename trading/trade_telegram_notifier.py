@@ -369,7 +369,7 @@ class TradeTelegramNotifier:
             return None
 
         ranked_similarity_candidates = self._get_plot_candidates(snapshot)
-        prepared_hours_map = pearson_live_runtime.current_analysis_window_prepared_hours_map
+        prepared_windows_map = pearson_live_runtime.current_analysis_window_prepared_windows_map
 
         output_path = self.output_dir / (
             f"trade_entry_{trade_id}_{snapshot.hour_start_ts}_{snapshot.current_bar_index}.png"
@@ -387,10 +387,10 @@ class TradeTelegramNotifier:
 
         for rank, item in enumerate(ranked_similarity_candidates, start=1):
             analysis_window_start_ts = item["hour_start_ts"]
-            if analysis_window_start_ts not in prepared_hours_map:
+            if analysis_window_start_ts not in prepared_windows_map:
                 continue
 
-            candidate_y = prepared_hours_map[analysis_window_start_ts]["y"]
+            candidate_y = prepared_windows_map[analysis_window_start_ts]["y"]
             candidate_x = list(range(len(candidate_y)))
 
             plt.plot(
