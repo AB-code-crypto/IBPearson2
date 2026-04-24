@@ -21,6 +21,7 @@ from trading.trade_store import (
 from ts.ts_config import TradingHalfHourMode
 
 logger = get_logger(__name__)
+HALF_HOUR_SECONDS = 1800
 
 
 @dataclass(slots=True)
@@ -87,14 +88,7 @@ class DecisionOrderExecutor:
         self.state = DecisionOrderState()
 
     def _get_slot_start_ts_from_ts(self, ts: int) -> int:
-        dt = datetime.fromtimestamp(ts)
-
-        if dt.minute < 30:
-            slot_dt = dt.replace(minute=0, second=0, microsecond=0)
-        else:
-            slot_dt = dt.replace(minute=30, second=0, microsecond=0)
-
-        return int(slot_dt.timestamp())
+        return (int(ts) // HALF_HOUR_SECONDS) * HALF_HOUR_SECONDS
 
     def _get_snapshot_reference_ts(self, snapshot) -> Optional[int]:
         """
@@ -191,12 +185,11 @@ class DecisionOrderExecutor:
 
     def _is_half_hour_slot_allowed(self, *, snapshot, pearson_live_runtime) -> bool:
         """Проверяет, разрешён ли текущий 30-минутный торговый слот."""
-        snapshot_ts = self._get_snapshot_reference_ts(snapshot)
-        if snapshot_ts is None:
+        slot_start_ts = self._get_snapshot_slot_start_ts(snapshot)
+        if slot_start_ts is None:
             return False
 
-        dt = datetime.fromtimestamp(snapshot_ts)
-        is_first_half = dt.minute < 30
+        is_first_half = (slot_start_ts % 3600) == 0
         mode = self._get_trading_half_hour_mode(pearson_live_runtime)
 
         if mode == TradingHalfHourMode.ANY_HALF:
