@@ -30,15 +30,10 @@ class DecisionOrderState:
     current_trade_id: Optional[int] = None
 
     # Начало 30-минутного торгового слота, в котором была открыта текущая позиция.
-    # Примеры:
-    #   09:00:00 -> слот 09:00:00
-    #   09:17:35 -> слот 09:00:00
-    #   09:30:00 -> слот 09:30:00
-    #   09:48:10 -> слот 09:30:00
     entry_slot_start_ts: Optional[int] = None
 
-    # Начало 30-минутного слота, в котором уже была попытка входа.
-    # Нужен для защиты от повторного входа в тот же самый получасовой слот.
+    # Начало 30-минутного торгового слота, в котором уже была попытка входа.
+    # Защищает от повторного открытия в том же слоте.
     last_entry_attempt_slot_start_ts: Optional[int] = None
 
 
@@ -75,10 +70,10 @@ class DecisionOrderExecutor:
             current_trade_id,
             position_side,
             position_qty,
-            entry_slot_start_ts,
+            entry_hour_start_ts,
     ):
         """Загружаем восстановленное состояние из recovery/reconcile слоя."""
-        normalized_slot_start_ts = self._get_slot_start_ts_from_ts(int(entry_slot_start_ts))
+        normalized_slot_start_ts = self._get_slot_start_ts_from_ts(int(entry_hour_start_ts))
 
         self.state = DecisionOrderState(
             position_side=position_side,
@@ -104,11 +99,11 @@ class DecisionOrderExecutor:
 
     def _get_snapshot_reference_ts(self, snapshot) -> Optional[int]:
         """
-        Возвращает базовый timestamp текущего snapshot для расчёта торгового слота.
+        Возвращает базовый UTC timestamp текущего snapshot для расчёта торгового слота.
         Приоритет:
-          1) last_bar_time_ts
-          2) snapshot_ts
-          3) timestamp
+        1) last_bar_time_ts;
+        2) snapshot_ts;
+        3) timestamp.
         """
         snapshot_ts = getattr(snapshot, "last_bar_time_ts", None)
         if snapshot_ts is None:
@@ -121,32 +116,34 @@ class DecisionOrderExecutor:
         return int(snapshot_ts)
 
     def _get_snapshot_slot_start_ts(self, snapshot) -> Optional[int]:
-        """
-        Возвращает начало 30-минутного торгового слота для текущего snapshot.
-
-        Правила:
-          - minute 00..29 -> начало слота на :00
-          - minute 30..59 -> начало слота на :30
-        """
+        """Возвращает UTC-start текущего 30-минутного торгового слота."""
         snapshot_ts = self._get_snapshot_reference_ts(snapshot)
         if snapshot_ts is None:
             return None
 
         return self._get_slot_start_ts_from_ts(snapshot_ts)
 
+    def _get_snapshot_slot_start_ts_ct(self, snapshot) -> Optional[int]:
+        """Возвращает CT-axis timestamp начала текущего торгового слота."""
+        analysis_start_ts = getattr(snapshot, "hour_start_ts", None)
+        analysis_start_ts_ct = getattr(snapshot, "hour_start_ts_ct", None)
+        slot_start_ts = self._get_snapshot_slot_start_ts(snapshot)
+
+        if analysis_start_ts is None or analysis_start_ts_ct is None or slot_start_ts is None:
+            return None
+
+        return int(analysis_start_ts_ct) + (int(slot_start_ts) - int(analysis_start_ts))
+
     def _get_snapshot_slot_start_ct(self, snapshot) -> Optional[str]:
-        """
-        Возвращает строковое представление начала торгового слота в CT.
-        Использует hour_start_ct как базу и при необходимости добавляет 30 минут.
-        """
+        """Возвращает строковое CT-представление начала текущего торгового слота."""
         hour_start_ct = getattr(snapshot, "hour_start_ct", None)
-        hour_start_ts = getattr(snapshot, "hour_start_ts", None)
+        analysis_start_ts = getattr(snapshot, "hour_start_ts", None)
         slot_start_ts = self._get_snapshot_slot_start_ts(snapshot)
 
         if hour_start_ct is None:
             return None
 
-        if hour_start_ts is None or slot_start_ts is None:
+        if analysis_start_ts is None or slot_start_ts is None:
             return hour_start_ct
 
         try:
@@ -154,21 +151,54 @@ class DecisionOrderExecutor:
         except ValueError:
             return hour_start_ct
 
-        delta_seconds = int(slot_start_ts) - int(hour_start_ts)
+        delta_seconds = int(slot_start_ts) - int(analysis_start_ts)
         slot_dt_ct = dt_ct + timedelta(seconds=delta_seconds)
         return slot_dt_ct.strftime("%Y-%m-%d %H:%M:%S")
 
-    def _is_half_hour_slot_allowed(self, snapshot) -> bool:
-        """
-        Проверяет, разрешён ли текущий 30-минутный слот согласно trading_half_hour_mode.
-        """
+    def _get_snapshot_bar_time_ts_ct(self, snapshot) -> Optional[int]:
+        analysis_start_ts = getattr(snapshot, "hour_start_ts", None)
+        analysis_start_ts_ct = getattr(snapshot, "hour_start_ts_ct", None)
+        bar_time_ts = getattr(snapshot, "last_bar_time_ts", None)
+
+        if analysis_start_ts is None or analysis_start_ts_ct is None or bar_time_ts is None:
+            return None
+
+        return int(analysis_start_ts_ct) + (int(bar_time_ts) - int(analysis_start_ts))
+
+    def _get_snapshot_bar_time_ct(self, snapshot) -> Optional[str]:
+        bar_time_ts_ct = self._get_snapshot_bar_time_ts_ct(snapshot)
+        if bar_time_ts_ct is None:
+            return None
+        return self._format_utc_ts(bar_time_ts_ct)
+
+    def _get_trading_half_hour_mode(self, pearson_live_runtime) -> TradingHalfHourMode:
+        if pearson_live_runtime is None:
+            raise ValueError(
+                "pearson_live_runtime is required to resolve trading_half_hour_mode"
+            )
+
+        strategy_params = getattr(pearson_live_runtime, "strategy_params", None)
+        if strategy_params is None:
+            raise ValueError(
+                "pearson_live_runtime.strategy_params is required to resolve trading_half_hour_mode"
+            )
+
+        mode = strategy_params.trading_half_hour_mode
+
+        if isinstance(mode, TradingHalfHourMode):
+            return mode
+
+        return TradingHalfHourMode(mode)
+
+    def _is_half_hour_slot_allowed(self, *, snapshot, pearson_live_runtime) -> bool:
+        """Проверяет, разрешён ли текущий 30-минутный торговый слот."""
         snapshot_ts = self._get_snapshot_reference_ts(snapshot)
         if snapshot_ts is None:
             return False
 
         dt = datetime.fromtimestamp(snapshot_ts)
         is_first_half = dt.minute < 30
-        mode = self.settings.trading_half_hour_mode
+        mode = self._get_trading_half_hour_mode(pearson_live_runtime)
 
         if mode == TradingHalfHourMode.ANY_HALF:
             return True
@@ -178,6 +208,26 @@ class DecisionOrderExecutor:
             return not is_first_half
 
         return False
+
+    def _is_friday_weekly_cutoff_slot(self, snapshot) -> bool:
+        """
+        Пятничный последний торговый час перед клирингом.
+
+        Считаем именно по торговому 30-минутному слоту, а не по start окна анализа.
+        В пятницу с 15:00 CT новые сделки не открываем, а открытую позицию
+        закрываем сразу.
+        """
+        slot_start_ct = self._get_snapshot_slot_start_ct(snapshot)
+
+        if slot_start_ct is None:
+            return False
+
+        try:
+            dt_ct = datetime.strptime(slot_start_ct, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return False
+
+        return dt_ct.weekday() == 4 and dt_ct.hour >= 15
 
     async def close(self):
         await self.telegram_notifier.close()
@@ -221,7 +271,10 @@ class DecisionOrderExecutor:
         }
 
     async def _maybe_enter_position(self, *, snapshot, active_futures, pearson_live_runtime=None):
-        if not self._can_enter(snapshot):
+        if not self._can_enter(
+                snapshot=snapshot,
+                pearson_live_runtime=pearson_live_runtime,
+        ):
             return
 
         decision = snapshot.decision_result["decision"]
@@ -247,7 +300,7 @@ class DecisionOrderExecutor:
                 event_type="SIGNAL_ACCEPTED",
                 snapshot=snapshot,
                 message=f"Получен торговый сигнал {decision}",
-                payload=None
+                payload=None,
             )
             self._sync_runtime_state(snapshot)
 
@@ -356,13 +409,16 @@ class DecisionOrderExecutor:
                 error=exc,
             )
 
-    def _can_enter(self, snapshot) -> bool:
+    def _can_enter(self, *, snapshot, pearson_live_runtime=None) -> bool:
         if self.state.position_side is not None:
             return False
 
         open_trade = get_open_trade_for_instrument(self.trade_db_path, self.instrument_code)
         if open_trade is not None:
             self._hydrate_state_from_open_trade(open_trade)
+            return False
+
+        if self._is_friday_weekly_cutoff_slot(snapshot):
             return False
 
         if not snapshot.decision_calculated:
@@ -375,7 +431,10 @@ class DecisionOrderExecutor:
         if decision not in ("LONG", "SHORT"):
             return False
 
-        if not self._is_half_hour_slot_allowed(snapshot):
+        if not self._is_half_hour_slot_allowed(
+                snapshot=snapshot,
+                pearson_live_runtime=pearson_live_runtime,
+        ):
             return False
 
         slot_start_ts = self._get_snapshot_slot_start_ts(snapshot)
@@ -413,21 +472,8 @@ class DecisionOrderExecutor:
             current_trade_id=current_trade_id,
             position_side=position_side,
             position_qty=position_qty,
-            entry_slot_start_ts=entry_slot_start_ts,
+            entry_hour_start_ts=entry_slot_start_ts,
         )
-
-    def _is_friday_last_trading_hour(self, snapshot) -> bool:
-        hour_start_ct = getattr(snapshot, "hour_start_ct", None)
-        hour_slot_ct = getattr(snapshot, "hour_slot_ct", None)
-        if hour_start_ct is None or hour_slot_ct is None:
-            return False
-
-        try:
-            dt_ct = datetime.strptime(hour_start_ct, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            return False
-
-        return dt_ct.weekday() == 4 and int(hour_slot_ct) == 15
 
     def _is_empty_snapshot(self, snapshot) -> bool:
         return (
@@ -444,6 +490,9 @@ class DecisionOrderExecutor:
 
         if getattr(snapshot, "hour_start_ts", None) is None:
             return False
+
+        if self._is_friday_weekly_cutoff_slot(snapshot):
+            return True
 
         current_slot_start_ts = self._get_snapshot_slot_start_ts(snapshot)
         if current_slot_start_ts is None:
@@ -696,7 +745,8 @@ class DecisionOrderExecutor:
             logger,
             (
                 f"Не удалось открыть позицию. "
-                f"decision={decision}, hour_ct={snapshot.hour_start_ct}, "
+                f"decision={decision}, analysis_window_ct={snapshot.hour_start_ct}, "
+                f"trade_slot_ct={self._get_snapshot_slot_start_ct(snapshot)}, "
                 f"bar_index={snapshot.current_bar_index}, error={error}"
             ),
             to_telegram=True,
@@ -723,7 +773,8 @@ class DecisionOrderExecutor:
             (
                 f"Не удалось закрыть позицию. "
                 f"entry_side={self.state.position_side}, "
-                f"hour_ct={snapshot.hour_start_ct}, "
+                f"analysis_window_ct={snapshot.hour_start_ct}, "
+                f"trade_slot_ct={self._get_snapshot_slot_start_ct(snapshot)}, "
                 f"bar_index={snapshot.current_bar_index}, error={error}"
             ),
             to_telegram=True,
@@ -743,6 +794,7 @@ class DecisionOrderExecutor:
             best_similarity_text = f"{best_similarity_score:.4f}"
 
         entry_slot_label = self._format_slot_label(self.state.entry_slot_start_ts)
+        trade_slot_ct = self._get_snapshot_slot_start_ct(snapshot)
 
         log_info(
             logger,
@@ -751,7 +803,8 @@ class DecisionOrderExecutor:
                 f"trade_id={trade_id} | "
                 f"decision={decision} | "
                 f"entry_slot={entry_slot_label} | "
-                f"hour_ct={snapshot.hour_start_ct} | "
+                f"trade_slot_ct={trade_slot_ct} | "
+                f"analysis_window_ct={snapshot.hour_start_ct} | "
                 f"bar_index={snapshot.current_bar_index} | "
                 f"qty={self.quantity} | "
                 f"forecast_n={forecast_candidate_count} | "
@@ -765,6 +818,7 @@ class DecisionOrderExecutor:
     def _log_exit_success(self, *, trade_id, snapshot, exit_side, placement):
         entry_slot_label = self._format_slot_label(self.state.entry_slot_start_ts)
         current_slot_label = self._format_slot_label(self._get_snapshot_slot_start_ts(snapshot))
+        trade_slot_ct = self._get_snapshot_slot_start_ct(snapshot)
 
         log_info(
             logger,
@@ -775,7 +829,8 @@ class DecisionOrderExecutor:
                 f"exit_side={exit_side} | "
                 f"entry_slot={entry_slot_label} | "
                 f"exit_slot={current_slot_label} | "
-                f"hour_ct={snapshot.hour_start_ct} | "
+                f"trade_slot_ct={trade_slot_ct} | "
+                f"analysis_window_ct={snapshot.hour_start_ct} | "
                 f"bar_index={snapshot.current_bar_index} | "
                 f"qty={self.state.position_qty} | "
                 f"avg_fill_price={placement.avg_fill_price}"
@@ -842,7 +897,10 @@ class DecisionOrderExecutor:
         plot_forecast_summary = self._build_plot_forecast_summary(snapshot)
 
         signal_slot_start_ts = self._get_snapshot_slot_start_ts(snapshot)
+        signal_slot_start_ts_ct = self._get_snapshot_slot_start_ts_ct(snapshot)
         signal_slot_start_ct = self._get_snapshot_slot_start_ct(snapshot)
+        signal_bar_time_ts_ct = self._get_snapshot_bar_time_ts_ct(snapshot)
+        signal_bar_time_ct = self._get_snapshot_bar_time_ct(snapshot)
 
         return create_trade(
             self.trade_db_path,
@@ -852,12 +910,12 @@ class DecisionOrderExecutor:
             quantity=self.quantity,
             status="NEW",
             signal_hour_start_ts=signal_slot_start_ts,
-            signal_hour_start_ts_ct=signal_slot_start_ts,
+            signal_hour_start_ts_ct=signal_slot_start_ts_ct,
             signal_hour_start_ct=signal_slot_start_ct,
             signal_bar_index=snapshot.current_bar_index,
             signal_bar_time_ts=snapshot.last_bar_time_ts,
-            signal_bar_time_ts_ct=None,
-            signal_bar_time_ct=self._format_utc_ts(snapshot.last_bar_time_ts),
+            signal_bar_time_ts_ct=signal_bar_time_ts_ct,
+            signal_bar_time_ct=signal_bar_time_ct,
             decision=decision,
             decision_reason=snapshot.decision_result["reason"],
             best_similarity_score=best_similarity_score,
@@ -915,7 +973,7 @@ class DecisionOrderExecutor:
         entry_hour_start_ct = None
         current_slot_start_ts = self._get_snapshot_slot_start_ts(snapshot)
         if self.state.entry_slot_start_ts == current_slot_start_ts:
-            entry_hour_start_ts_ct = self.state.entry_slot_start_ts
+            entry_hour_start_ts_ct = self._get_snapshot_slot_start_ts_ct(snapshot)
             entry_hour_start_ct = self._get_snapshot_slot_start_ct(snapshot)
 
         upsert_trade_runtime_state(
@@ -936,55 +994,82 @@ class DecisionOrderExecutor:
         )
 
     def _extract_perm_id(self, placement):
-        trade = placement.receipt.trade
+        receipt = getattr(placement, "receipt", None)
+        trade = getattr(receipt, "trade", None)
+
         order = getattr(trade, "order", None)
-        if order is None:
-            return None
+        if order is not None:
+            perm_id = getattr(order, "permId", None)
+            if perm_id:
+                return int(perm_id)
 
-        perm_id = getattr(order, "permId", None)
-        if perm_id in (None, 0):
-            return None
+        order_status = getattr(trade, "orderStatus", None)
+        if order_status is not None:
+            perm_id = getattr(order_status, "permId", None)
+            if perm_id:
+                return int(perm_id)
 
-        return int(perm_id)
+        return None
 
-    def _extract_done_ts(self, placement):
-        if placement.done is not None:
-            return int(placement.done.checked_at_utc.timestamp())
-        return int(placement.receipt.placed_at_utc.timestamp())
+    def _extract_done_ts(self, placement) -> int:
+        fills = getattr(placement, "fills", None) or []
+        fill_times = []
+        for fill in fills:
+            fill_time = getattr(fill, "time", None)
+            if fill_time is not None:
+                fill_times.append(fill_time)
 
-    def _build_forecast_direction(self, forecast_summary):
-        if forecast_summary is None:
-            return None
+        if fill_times:
+            last_fill_time = max(fill_times)
+            if last_fill_time.tzinfo is None:
+                last_fill_time = last_fill_time.replace(tzinfo=timezone.utc)
+            return int(last_fill_time.timestamp())
 
-        mean_final_move = forecast_summary["mean_final_move"]
-        median_final_move = forecast_summary["median_final_move"]
-        if mean_final_move > 0.0 and median_final_move > 0.0:
-            return "UP"
-        if mean_final_move < 0.0 and median_final_move < 0.0:
-            return "DOWN"
-        return "MIXED"
+        done = getattr(placement, "done", None)
+        done_at = getattr(done, "done_at_utc", None)
+        if done_at is not None:
+            if done_at.tzinfo is None:
+                done_at = done_at.replace(tzinfo=timezone.utc)
+            return int(done_at.timestamp())
 
-    def _format_utc_ts(self, ts):
-        if ts is None:
-            return None
-        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        return int(datetime.now(timezone.utc).timestamp())
 
-    def _format_slot_label(self, slot_start_ts):
-        if slot_start_ts is None:
-            return "-"
-
-        dt = datetime.fromtimestamp(slot_start_ts)
-        half_label = "FIRST_HALF" if dt.minute == 0 else "SECOND_HALF"
-        return f"{dt.strftime('%H:%M')} ({half_label})"
-
-    def _get_active_local_symbol(self, active_futures):
+    def _get_active_local_symbol(self, active_futures) -> str:
         if self.instrument_code not in active_futures:
-            raise ValueError(
-                f"Для инструмента {self.instrument_code} нет активного localSymbol в active_futures"
-            )
+            raise ValueError(f"Нет active future для {self.instrument_code}")
 
         local_symbol = active_futures[self.instrument_code]
         if not local_symbol:
-            raise ValueError(f"Пустой localSymbol для инструмента {self.instrument_code}")
+            raise ValueError(f"Пустой active future для {self.instrument_code}")
 
-        return local_symbol
+        return str(local_symbol)
+
+    @staticmethod
+    def _format_utc_ts(ts) -> Optional[str]:
+        if ts is None:
+            return None
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    def _format_slot_label(self, slot_start_ts) -> str:
+        if slot_start_ts is None:
+            return "-"
+        return self._format_utc_ts(slot_start_ts) or "-"
+
+    @staticmethod
+    def _build_forecast_direction(forecast_summary) -> Optional[str]:
+        if forecast_summary is None:
+            return None
+
+        direction = forecast_summary.get("direction")
+        if direction is not None:
+            return direction
+
+        mean_final_move = forecast_summary.get("mean_final_move")
+        if mean_final_move is None:
+            return None
+
+        if mean_final_move > 0:
+            return "LONG"
+        if mean_final_move < 0:
+            return "SHORT"
+        return "FLAT"
