@@ -7,17 +7,26 @@ from core.db_initializer import build_table_name
 from core.logger import get_logger, log_warning
 from ts.candidate_decision import evaluate_decision_layer
 from ts.candidate_forecast import build_group_forecast_from_prepared_candidates
-from ts.pearson_runtime import PearsonCurrentHour
 from ts.candidate_scoring import rank_prepared_candidates_by_similarity
+from ts.pearson_runtime import PearsonCurrentHour
 from ts.prepared_reader import load_prepared_hours_by_slots
 from ts.strategy_params import DEFAULT_STRATEGY_PARAMS, StrategyParams
 
 logger = get_logger(__name__)
 
+HALF_HOUR_SECONDS = 1800
+
 
 @dataclass
 class PearsonLiveSnapshot:
     # Снимок текущего состояния live-runtime первого шага Пирсона.
+    #
+    # Поля hour_* соответствуют текущей схеме проекта.
+    # По смыслу они содержат start текущего 60-минутного окна анализа.
+    #
+    # Окно анализа теперь стартует каждые 30 минут:
+    # - HH:00..HH+1:00 -> торговля в HH:30..HH+1:00;
+    # - HH:30..HH+1:30 -> торговля в HH+1:00..HH+1:30.
     hour_start_ts: Optional[int]
     hour_start_ts_ct: Optional[int]
     hour_start_ct: Optional[str]
@@ -49,21 +58,24 @@ class PearsonLiveSnapshot:
     decision_result: Optional[dict]
 
 
-def floor_to_hour_ts(ts):
-    # Округляем Unix timestamp вниз до точного начала часа.
-    return (ts // 3600) * 3600
+def floor_to_half_hour_ts(ts: int) -> int:
+    return (ts // HALF_HOUR_SECONDS) * HALF_HOUR_SECONDS
 
 
 class PearsonLiveRuntime:
     # Боевой live-runtime для первого шага по корреляции Пирсона.
     #
-    # Идея:
-    # - живём от потока закрытых 5-секундных баров;
-    # - внутри активного часа копим текущий x-ряд;
-    # - как только приходит первый бар нового часа,
-    #   полностью сбрасываем состояние и начинаем новый час;
-    # - historical candidates загружаем сразу в начале часа;
-    # - расчёт корреляции включаем только в разрешённом окне.
+    # Правильная модель торговли каждые 30 минут:
+    # - анализ всегда строится на 60-минутном окне;
+    # - новое окно анализа стартует каждые 30 минут;
+    # - вход ищется во второй половине окна анализа;
+    # - SECOND_HALF_ONLY соответствует старой логике:
+    #   analysis HH:00..HH+1:00, trade HH:30..HH+1:00;
+    # - FIRST_HALF_ONLY добавляет новые окна:
+    #   analysis HH:30..HH+1:30, trade HH+1:00..HH+1:30.
+    #
+    # Historical candidates всегда читаются только из prepared DB.
+    # Runtime не собирает historical candidates из price DB.
     def __init__(
             self,
             settings,
@@ -91,6 +103,9 @@ class PearsonLiveRuntime:
         self.min_correlation = min_correlation
         self.top_n = top_n
 
+        # Историческое имя current_hour оставлено как имя runtime-контейнера.
+        # По смыслу это текущее 60-минутное окно анализа, которое может
+        # начинаться как в HH:00, так и в HH:30.
         self.current_hour = None
         self.current_hour_prepared_hours_map = {}
         self.current_hour_valid = True
@@ -112,25 +127,28 @@ class PearsonLiveRuntime:
         # - bid_open
         # - ask_close
         # - bid_close
-        bar_time_ts = bar["bar_time_ts"]
-        bar_time_ts_ct = bar["bar_time_ts_ct"]
+        bar_time_ts = int(bar["bar_time_ts"])
+        bar_time_ts_ct = int(bar["bar_time_ts_ct"])
 
-        bar_hour_start_ts = floor_to_hour_ts(bar_time_ts)
-        bar_hour_start_ts_ct = floor_to_hour_ts(bar_time_ts_ct)
+        trade_slot_start_ts = floor_to_half_hour_ts(bar_time_ts)
+        trade_slot_start_ts_ct = floor_to_half_hour_ts(bar_time_ts_ct)
+
+        analysis_window_start_ts = trade_slot_start_ts - HALF_HOUR_SECONDS
+        analysis_window_start_ts_ct = trade_slot_start_ts_ct - HALF_HOUR_SECONDS
 
         if self.current_hour is None:
-            self._start_new_hour(bar_hour_start_ts, bar_hour_start_ts_ct)
+            self._start_new_hour(analysis_window_start_ts, analysis_window_start_ts_ct)
 
-        elif bar_hour_start_ts_ct < self.current_hour.hour_start_ts_ct:
+        elif analysis_window_start_ts_ct < self.current_hour.hour_start_ts_ct:
             raise ValueError(
-                f"Получен бар из прошлого часа: "
+                f"Получен бар из прошлого окна анализа: "
                 f"bar_time_ts={bar_time_ts}, "
                 f"bar_time_ts_ct={bar_time_ts_ct}, "
-                f"current_hour_start_ts_ct={self.current_hour.hour_start_ts_ct}"
+                f"current_analysis_start_ts_ct={self.current_hour.hour_start_ts_ct}"
             )
 
-        elif bar_hour_start_ts_ct > self.current_hour.hour_start_ts_ct:
-            self._start_new_hour(bar_hour_start_ts, bar_hour_start_ts_ct)
+        elif analysis_window_start_ts_ct > self.current_hour.hour_start_ts_ct:
+            self._start_new_hour(analysis_window_start_ts, analysis_window_start_ts_ct)
 
         self._append_bar_to_current_hour(bar)
 
@@ -205,7 +223,7 @@ class PearsonLiveRuntime:
         return self.last_snapshot
 
     def _start_new_hour(self, hour_start_ts, hour_start_ts_ct):
-        # Полностью переключаем runtime на новый час.
+        # Полностью переключаем runtime на новое 60-минутное окно анализа.
         self.current_hour = PearsonCurrentHour(hour_start_ts, hour_start_ts_ct)
         self.current_hour_valid = True
         self.current_hour_invalid_reason = None
@@ -217,38 +235,57 @@ class PearsonLiveRuntime:
         )
 
         prepared_hours = self._load_candidates_for_current_hour()
-        self.current_hour_prepared_hours_map = {
-            item["hour_start_ts"]: item for item in prepared_hours
-        }
+
+        prepared_hours_by_start_ts: dict[int, dict] = {}
+        for prepared_hour in prepared_hours:
+            prepared_start_ts = int(prepared_hour["hour_start_ts"])
+
+            if prepared_start_ts in prepared_hours_by_start_ts:
+                raise ValueError(
+                    f"Дублирующийся prepared-кандидат: "
+                    f"analysis_window_start_ts={prepared_start_ts}"
+                )
+
+            prepared_hours_by_start_ts[prepared_start_ts] = prepared_hour
+
+        self.current_hour_prepared_hours_map = prepared_hours_by_start_ts
         self.current_hour.set_candidates(prepared_hours)
 
+    def _get_current_analysis_window_start_offset_seconds(self) -> int:
+        if self.current_hour is None:
+            return 0
+
+        return int(self.current_hour.hour_start_ts_ct) % 3600
+
     def _load_candidates_for_current_hour(self):
-        # Загружаем всех historical candidates сразу в начале часа.
+        # Загружаем historical candidates сразу в начале окна анализа.
         #
         # Берём только:
         # - разрешённые hour_slot;
-        # - часы строго раньше текущего часа.
+        # - окна с тем же offset старта: HH:00 или HH:30;
+        # - окна строго раньше текущего окна анализа по CT-оси.
         prepared_conn = sqlite3.connect(self.settings.prepared_db_path)
 
         try:
             prepared_conn.row_factory = sqlite3.Row
             prepared_conn.execute("PRAGMA busy_timeout=5000;")
 
-            prepared_hours = load_prepared_hours_by_slots(
+            return load_prepared_hours_by_slots(
                 prepared_conn=prepared_conn,
                 table_name=self.table_name,
                 hour_slots_ct=self.allowed_hour_slots,
                 before_hour_start_ts_ct=self.current_hour.hour_start_ts_ct,
+                analysis_window_start_offset_seconds=(
+                    self._get_current_analysis_window_start_offset_seconds()
+                ),
             )
-
-            return prepared_hours
 
         finally:
             prepared_conn.close()
 
     def _load_existing_current_hour_bars_from_db(self, from_bar_time_ts, to_bar_time_ts_exclusive):
         # Загружаем уже существующие в price DB полностью собранные бары
-        # текущего часа в диапазоне [from_bar_time_ts, to_bar_time_ts_exclusive).
+        # текущего окна анализа в диапазоне [from_bar_time_ts, to_bar_time_ts_exclusive).
         if to_bar_time_ts_exclusive <= from_bar_time_ts:
             return []
 
@@ -293,8 +330,8 @@ class PearsonLiveRuntime:
         )
 
     def _try_hydrate_current_hour_from_db(self, target_bar_time_ts):
-        # Пытаемся догрузить в runtime уже существующие в БД бары текущего часа
-        # до target_bar_time_ts (не включая его).
+        # Пытаемся догрузить в runtime уже существующие в БД бары текущего
+        # окна анализа до target_bar_time_ts, не включая target.
         if self.current_hour is None:
             return
         if self.current_hour_expected_next_bar_time_ts is None:
@@ -316,8 +353,8 @@ class PearsonLiveRuntime:
             self._append_complete_bar_without_gap_checks(row)
 
     def mark_startup_backfill_completed(self, sync_ts=None):
-        # Фиксируем, что стартовая разовая докачка последнего часа завершилась.
-        # После этого gap-check внутри текущего часа снова работает в обычном режиме.
+        # Фиксируем, что стартовая разовая докачка завершилась.
+        # После этого gap-check внутри текущего окна анализа снова работает в обычном режиме.
         self.startup_backfill_completed = True
 
     def _rank_similarity_candidates(self, ranked_candidates):
@@ -339,7 +376,8 @@ class PearsonLiveRuntime:
 
             if hour_start_ts not in self.current_hour_prepared_hours_map:
                 raise ValueError(
-                    f"Не найден prepared-кандидат для hour_start_ts={hour_start_ts}"
+                    f"Не найден prepared-кандидат для "
+                    f"analysis_window_start_ts={hour_start_ts}"
                 )
 
             shortlist_prepared_hour = dict(
@@ -357,11 +395,8 @@ class PearsonLiveRuntime:
         return ranked_similarity_candidates
 
     def _build_forecast_summary(self, ranked_similarity_candidates):
-        # Строим сводный прогноз по лучшим similarity-кандидатам.
-        #
-        # Здесь тоже не работаем по всей истории:
-        # сначала similarity уже отобрал и отсортировал shortlist,
-        # а прогноз строится только по его лучшей части.
+        # Строим сводный прогноз по лучшим similarity-кандидатам
+        # до конца текущего 60-минутного окна анализа.
         if not ranked_similarity_candidates:
             return None
 
@@ -376,7 +411,8 @@ class PearsonLiveRuntime:
 
             if hour_start_ts not in self.current_hour_prepared_hours_map:
                 raise ValueError(
-                    f"Не найден prepared-кандидат для hour_start_ts={hour_start_ts}"
+                    f"Не найден prepared-кандидат для "
+                    f"analysis_window_start_ts={hour_start_ts}"
                 )
 
             selected_prepared_hours.append(
@@ -419,18 +455,18 @@ class PearsonLiveRuntime:
         )
 
     def _append_bar_to_current_hour(self, bar):
-        # Добавляем очередной бар в текущий runtime-час.
+        # Добавляем очередной бар в текущее 60-минутное окно анализа.
         #
         # Здесь же контролируем:
-        # - что внутри часа нет дырок по timestamp;
+        # - что внутри окна нет дырок по timestamp;
         # - что в текущем баре нет NULL-цен.
         #
-        # Если час становится невалидным, мы больше не считаем по нему
-        # корреляцию, но сам runtime продолжаем вести до конца часа.
+        # Если окно становится невалидным, мы больше не считаем по нему
+        # корреляцию, но сам runtime продолжаем вести до конца окна.
         if self.current_hour is None:
-            raise ValueError("Текущий час ещё не инициализирован")
+            raise ValueError("Текущее окно анализа ещё не инициализировано")
 
-        bar_time_ts = bar["bar_time_ts"]
+        bar_time_ts = int(bar["bar_time_ts"])
 
         if self.current_hour_expected_next_bar_time_ts is None:
             raise ValueError("current_hour_expected_next_bar_time_ts is None")
@@ -446,15 +482,15 @@ class PearsonLiveRuntime:
             self._try_hydrate_current_hour_from_db(target_bar_time_ts=bar_time_ts)
 
             if bar_time_ts > self.current_hour_expected_next_bar_time_ts:
-                # Пока не завершилась стартовая разовая докачка последнего часа,
-                # не признаём текущий час невалидным. Это нормальный сценарий
-                # рестарта в середине часа: realtime уже пошёл, а backfill ещё
-                # не успел заполнить начало текущего часа в БД.
+                # Пока не завершилась стартовая разовая докачка, не признаём
+                # текущее окно невалидным. Это нормальный сценарий рестарта:
+                # realtime уже пошёл, а backfill ещё не успел заполнить начало
+                # текущего окна анализа в БД.
                 if not self.startup_backfill_completed:
                     return
 
                 self._mark_current_hour_invalid(
-                    f"Обнаружена дырка в текущем часе: "
+                    f"Обнаружена дырка в текущем окне анализа: "
                     f"ожидался bar_time_ts={self.current_hour_expected_next_bar_time_ts}, "
                     f"получен bar_time_ts={bar_time_ts}"
                 )
@@ -465,18 +501,18 @@ class PearsonLiveRuntime:
         bid_close = bar["bid_close"]
 
         if ask_open is None:
-            self._mark_current_hour_invalid("ask_open is NULL в текущем часу")
+            self._mark_current_hour_invalid("ask_open is NULL в текущем окне анализа")
 
         if bid_open is None:
-            self._mark_current_hour_invalid("bid_open is NULL в текущем часу")
+            self._mark_current_hour_invalid("bid_open is NULL в текущем окне анализа")
 
         if ask_close is None:
-            self._mark_current_hour_invalid("ask_close is NULL в текущем часу")
+            self._mark_current_hour_invalid("ask_close is NULL в текущем окне анализа")
 
         if bid_close is None:
-            self._mark_current_hour_invalid("bid_close is NULL в текущем часу")
+            self._mark_current_hour_invalid("bid_close is NULL в текущем окне анализа")
 
-        # Даже если час уже стал невалидным, всё равно продолжаем копить
+        # Даже если окно уже стало невалидным, всё равно продолжаем копить
         # x-ряд, если у бара есть все нужные цены. Это полезно для отладки и
         # делает поведение runtime более предсказуемым.
         if (
@@ -498,10 +534,10 @@ class PearsonLiveRuntime:
         )
 
     def _mark_current_hour_invalid(self, reason):
-        # Помечаем текущий час невалидным.
+        # Помечаем текущее окно анализа невалидным.
         #
         # Первый reason сохраняем как основной, чтобы потом было понятно,
-        # почему именно этот час был исключён из расчёта.
+        # почему именно это окно было исключено из расчёта.
         if self.current_hour_valid:
             self.current_hour_valid = False
             self.current_hour_invalid_reason = reason
@@ -518,9 +554,9 @@ class PearsonLiveRuntime:
             log_warning(
                 logger,
                 (
-                    "PEARSON LIVE INVALID HOUR | "
+                    "PEARSON LIVE INVALID ANALYSIS WINDOW | "
                     f"instrument={self.instrument_code} | "
-                    f"hour_start_ct={hour_start_ct} | "
+                    f"analysis_start_ct={hour_start_ct} | "
                     f"hour_slot_ct={hour_slot_ct} | "
                     f"current_bar_count={current_bar_count} | "
                     f"expected_next_bar_time_ts={self.current_hour_expected_next_bar_time_ts} | "
@@ -531,7 +567,7 @@ class PearsonLiveRuntime:
 
     def _is_search_window_active(self):
         # Проверяем, входит ли текущий уже накопленный префикс
-        # в разрешённое окно поиска.
+        # в разрешённое окно поиска внутри 60-минутного окна анализа.
         if self.current_hour is None:
             return False
 
@@ -582,7 +618,7 @@ class PearsonLiveRuntime:
             forecast_summary,
             decision_result,
     ):
-        # Собираем snapshot по текущему активному часу.
+        # Собираем snapshot по текущему активному 60-минутному окну анализа.
         if self.current_hour is None:
             return self._build_empty_snapshot()
 

@@ -1,84 +1,54 @@
 """
 Единый служебный скрипт для работы с prepared DB.
 
-Зачем нужен
------------
+Prepared DB теперь хранит не "часы" в старом смысле, а 60-минутные
+analysis windows, которые могут стартовать каждые 30 минут:
 
-1. проверка чтения prepared DB через prepared_reader;
-2. массовая синхронизация prepared DB по диапазону исторических часов;
-3. точечная пересборка одного конкретного prepared-часа.
+- HH:00 .. HH+1:00
+- HH:30 .. HH+1:30
 
-Какие режимы есть
------------------
-Скрипт поддерживает три режима, задаваемых через PREPARED_TOOL_MODE:
+Каждое окно анализа по-прежнему содержит 720 строк по 5 секунд.
+Названия колонок в БД остаются hour_* по текущей схеме, но по смыслу
+это start 60-минутного analysis window.
+
+Режимы
+------
 
 1. inspect_reader
-   Диагностический режим.
-   Загружает prepared-часы по группе CT-slot через load_prepared_hours_by_slots,
-   при необходимости ограничивает историю часами строго раньше указанного
-   момента на CT-оси и печатает краткую сводку по найденным данным.
+   Проверяет чтение prepared DB через load_prepared_hours_by_slots(...).
 
-   Этот режим нужен, когда надо быстро понять:
-   - читается ли prepared DB вообще;
-   - какие CT-slot реально попадают в поиск;
-   - есть ли исторические prepared-часы до заданного момента;
-   - как выглядят первый и последний найденный prepared-час.
+   Можно выбрать:
+   - CT-hour slot;
+   - offset старта analysis window:
+       0    -> только HH:00 windows;
+       1800 -> только HH:30 windows;
+       None -> все offsets;
+   - ограничение "строго раньше" заданного момента на CT-оси.
 
 2. sync_range
-   Режим массового заполнения prepared DB.
-   Работает через общий sync-механизм sync_prepared_hours_for_range(...),
-   который:
-   - находит candidate-часы в price DB;
-   - проверяет, есть ли они уже в prepared DB;
-   - вставляет только отсутствующие prepared-часы;
-   - пропускает уже существующие;
-   - отдельно считает невалидные часы, которые нельзя подготовить.
+   Массово заполняет prepared DB по диапазону analysis-window starts.
 
-   Этот режим нужен после загрузки истории, после ремонта price DB,
-   после миграций или просто когда надо дозаполнить prepared DB по диапазону.
+   Работает через sync_prepared_analysis_windows_for_range(...):
+   - находит candidate analysis windows в price DB;
+   - для каждого окна проверяет, есть ли уже 720 строк в prepared DB;
+   - строит отсутствующие окна;
+   - пропускает уже готовые;
+   - отдельно считает невалидные окна.
 
-3. rebuild_one_hour
-   Точечная пересборка одного конкретного исторического часа.
-   Скрипт:
-   - берёт выбранный UTC-час из price DB;
-   - строит prepared-строки через build_prepared_rows_for_one_hour(...);
-   - полностью заменяет этот час в prepared DB через replace_prepared_hour(...);
-   - печатает краткую проверку результата.
+   Этот режим нужен для полной пересборки prepared DB после удаления старой БД.
 
-   Этот режим нужен, когда проблема локализована в одном конкретном часу
-   и нет смысла пересинхронизировать целый диапазон.
+3. rebuild_one_window
+   Точечно пересобирает одно 60-минутное analysis window.
 
-Почему здесь одновременно есть UTC и CT
----------------------------------------
-Технический якорь prepared-часа в проекте — это hour_start_ts в UTC.
-Поэтому диапазоны sync_range и rebuild_one_hour задаются именно через UTC.
+   Старт окна задаётся в UTC и может быть только на HH:00 или HH:30.
 
-Но сама стратегия живёт на CT-логике, и prepared DB хранит дополнительные CT-поля:
-- hour_start_ts_ct
-- hour_start_ct
-- hour_slot_ct
+Эксплуатационная последовательность
+-----------------------------------
 
-Поэтому в выводе скрипт показывает и UTC, и CT там, где это полезно,
-а в inspect_reader есть отдельный параметр BEFORE_HOUR_START_CT_TEXT,
-который задаётся именно в CT — потому что он относится к фильтрации истории
-на CT-оси проекта.
-
-Что скрипт НЕ делает
---------------------
-Скрипт не работает с price DB как с ремонтом котировок, не чинит дырки и не
-докачивает историю из брокера. Его зона ответственности — только prepared DB.
-
-То есть последовательность эксплуатации обычно такая:
-1. сначала приводим в порядок price DB;
-2. потом этим скриптом проверяем или пересобираем prepared DB.
-
-Итог
-----
-Этот файл — единая точка обслуживания prepared DB.
-Он покрывает три базовых рабочих сценария:
-- посмотреть, что reader реально читает;
-- массово синхронизировать prepared DB по диапазону;
-- точечно пересобрать один выбранный prepared-час.
+1. Сначала price DB должна быть в порядке.
+2. Потом можно удалить старую prepared.sqlite3.
+3. Затем запустить этот скрипт в режиме sync_range.
+4. После сборки проверить prepared DB через inspect_reader по offset 0 и 1800.
 """
 
 import sqlite3
@@ -89,11 +59,11 @@ from config import settings_live as settings
 from contracts import Instrument
 from core.db_initializer import build_table_name, initialize_prepared_database
 from ts.prepared_builder import (
-    build_prepared_rows_for_one_hour,
-    replace_prepared_hour,
+    build_prepared_rows_for_analysis_window,
+    replace_prepared_analysis_window,
 )
 from ts.prepared_reader import load_prepared_hours_by_slots
-from ts.prepared_sync import sync_prepared_hours_for_range
+from ts.prepared_sync import sync_prepared_analysis_windows_for_range
 from ts.ts_time import resolve_allowed_hour_slots
 
 # ============================================================
@@ -103,7 +73,7 @@ from ts.ts_time import resolve_allowed_hour_slots
 # Режимы:
 # - "inspect_reader"
 # - "sync_range"
-# - "rebuild_one_hour"
+# - "rebuild_one_window"
 PREPARED_TOOL_MODE = "sync_range"
 
 INSTRUMENT_CODE = "MNQ"
@@ -111,30 +81,57 @@ INSTRUMENT_CODE = "MNQ"
 # ------------------------------------------------------------
 # Режим inspect_reader
 # ------------------------------------------------------------
+
+# CT-hour slot старта analysis window.
+# Например:
+# - для окна 08:00..09:00 HOUR_SLOT_CT = 8, offset = 0;
+# - для окна 08:30..09:30 HOUR_SLOT_CT = 8, offset = 1800.
 HOUR_SLOT_CT = 8
 
-# Если нужно, можно ограничить только историей строго раньше этого часа на CT-оси.
-# Формат: "YYYY-MM-DD HH:MM:SS" в CT.
+# Какие соседние CT-hour slots разрешены стратегией для поиска исторических окон.
+# Обычно оставляем через resolve_allowed_hour_slots(HOUR_SLOT_CT).
+USE_ALLOWED_HOUR_SLOT_GROUP = True
+
+# Фильтр по offset старта analysis window:
+# - 0    -> только HH:00..HH+1:00;
+# - 1800 -> только HH:30..HH+1:30;
+# - None -> не фильтровать по offset.
+ANALYSIS_WINDOW_START_OFFSET_SECONDS = 0
+
+# Ограничение истории: читать только окна строго раньше этого момента на CT-оси.
+# Формат: "YYYY-MM-DD HH:MM:SS" в CT-axis проекта.
+# Допускается только точная 30-минутная граница: HH:00:00 или HH:30:00.
 # Если None - ограничение не применяется.
-BEFORE_HOUR_START_CT_TEXT = None
+BEFORE_ANALYSIS_WINDOW_START_CT_TEXT = None
 
 # ------------------------------------------------------------
 # Режим sync_range
 # ------------------------------------------------------------
+
+# Диапазон start analysis windows в UTC.
 # Оба ограничения необязательные.
+# Формат: "YYYY-MM-DD HH:MM:SS" UTC.
+# Допускается только точная 30-минутная граница: HH:00:00 или HH:30:00.
+#
 # Если None - ограничение не применяется.
 #
-# Здесь указываем именно начало часа в UTC.
-SYNC_START_HOUR_TEXT_UTC = None
-SYNC_END_HOUR_TEXT_UTC = None
+# При полной пересборке prepared DB после удаления файла можно оставить None/None.
+SYNC_START_ANALYSIS_WINDOW_TEXT_UTC = None
+SYNC_END_ANALYSIS_WINDOW_TEXT_UTC = None
 
 # ------------------------------------------------------------
-# Режим rebuild_one_hour
+# Режим rebuild_one_window
 # ------------------------------------------------------------
-# Начало исторического часа в UTC.
-REBUILD_HOUR_START_TEXT_UTC = "2026-03-19 14:00:00"
+
+# Старт 60-минутного analysis window в UTC.
+# Может быть HH:00:00 или HH:30:00.
+REBUILD_ANALYSIS_WINDOW_START_TEXT_UTC = "2026-03-19 14:00:00"
 
 CHICAGO_TZ = ZoneInfo("America/Chicago")
+
+HALF_HOUR_SECONDS = 1800
+ANALYSIS_WINDOW_SECONDS = 3600
+EXPECTED_PREPARED_ROWS = 720
 
 
 # ============================================================
@@ -158,107 +155,149 @@ def build_instrument_table_name(instrument_code):
     )
 
 
-def parse_optional_ct_hour_start_text(hour_start_text_ct):
+def ensure_half_hour_boundary(dt, source_text):
+    if dt.minute not in (0, 30) or dt.second != 0 or dt.microsecond != 0:
+        raise ValueError(
+            "Ожидалась точная 30-минутная граница HH:00:00 или HH:30:00, "
+            f"получено: {source_text}"
+        )
+
+
+def parse_optional_ct_analysis_window_start_text(text_ct):
     # Преобразуем текст "YYYY-MM-DD HH:MM:SS" в timestamp локальной CT-оси проекта.
-    # Если передан None, возвращаем None.
-    if hour_start_text_ct is None:
+    # Это именно CT-axis timestamp, поэтому timezone.utc здесь используется как
+    # техническая числовая ось проекта, а не как реальный UTC-момент.
+    if text_ct is None:
         return None
 
-    dt = datetime.strptime(hour_start_text_ct, "%Y-%m-%d %H:%M:%S")
+    dt = datetime.strptime(text_ct, "%Y-%m-%d %H:%M:%S")
+    ensure_half_hour_boundary(dt, text_ct)
+
     dt = dt.replace(tzinfo=timezone.utc)
-
-    if dt.minute != 0 or dt.second != 0 or dt.microsecond != 0:
-        raise ValueError(
-            f"Ожидалось точное начало часа, получено: {hour_start_text_ct}"
-        )
-
     return int(dt.timestamp())
 
 
-def parse_optional_utc_hour_start_text(hour_start_text):
-    # Преобразуем текст "YYYY-MM-DD HH:MM:SS" в UTC timestamp начала часа.
-    # Если передан None, возвращаем None.
-    if hour_start_text is None:
+def parse_optional_utc_analysis_window_start_text(text_utc):
+    # Преобразуем текст "YYYY-MM-DD HH:MM:SS" в UTC timestamp старта analysis window.
+    if text_utc is None:
         return None
 
-    dt = datetime.strptime(hour_start_text, "%Y-%m-%d %H:%M:%S")
+    dt = datetime.strptime(text_utc, "%Y-%m-%d %H:%M:%S")
+    ensure_half_hour_boundary(dt, text_utc)
+
     dt = dt.replace(tzinfo=timezone.utc)
-
-    if dt.minute != 0 or dt.second != 0 or dt.microsecond != 0:
-        raise ValueError(
-            f"Ожидалось точное начало часа, получено: {hour_start_text}"
-        )
-
     return int(dt.timestamp())
 
 
-def parse_required_utc_hour_start_text(hour_start_text):
-    hour_start_ts = parse_optional_utc_hour_start_text(hour_start_text)
+def parse_required_utc_analysis_window_start_text(text_utc):
+    analysis_window_start_ts = parse_optional_utc_analysis_window_start_text(text_utc)
 
-    if hour_start_ts is None:
-        raise ValueError("Требуется указать час, но получено None")
+    if analysis_window_start_ts is None:
+        raise ValueError("Требуется указать start analysis window, но получено None")
 
-    return hour_start_ts
-
-
-def format_utc_hour_start_ts(hour_start_ts):
-    return datetime.fromtimestamp(hour_start_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return analysis_window_start_ts
 
 
-def format_ct_hour_start_ts_from_utc(hour_start_ts):
-    dt_utc = datetime.fromtimestamp(hour_start_ts, tz=timezone.utc)
+def format_utc_ts(ts):
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_ct_ts_from_utc(ts):
+    dt_utc = datetime.fromtimestamp(ts, tz=timezone.utc)
     dt_ct = dt_utc.astimezone(CHICAGO_TZ)
     return dt_ct.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def print_range_line(label, hour_start_ts):
-    if hour_start_ts is None:
+def offset_text(offset_seconds):
+    if offset_seconds is None:
+        return "ALL"
+    if offset_seconds == 0:
+        return "HH:00"
+    if offset_seconds == HALF_HOUR_SECONDS:
+        return "HH:30"
+    return str(offset_seconds)
+
+
+def print_range_line(label, ts):
+    if ts is None:
         print(f"{label}: None")
         return
 
     print(
         f"{label}: "
-        f"UTC={format_utc_hour_start_ts(hour_start_ts)} | "
-        f"CT={format_ct_hour_start_ts_from_utc(hour_start_ts)}"
+        f"UTC={format_utc_ts(ts)} | "
+        f"CT={format_ct_ts_from_utc(ts)}"
     )
 
 
-def print_prepared_hour_summary(prefix, hour_payload):
+def print_prepared_window_summary(prefix, payload):
     print(f"{prefix}:")
-    print(f"  hour_start_ts:     {hour_payload['hour_start_ts']}")
-    print(f"  hour_start_ts_ct:  {hour_payload['hour_start_ts_ct']}")
-    print(f"  hour_start_ct:     {hour_payload['hour_start_ct']} CT")
-    print(f"  hour_slot_ct:      {hour_payload['hour_slot_ct']}")
-    print(f"  contract:          {hour_payload['contract']}")
-    print(f"  len(y):            {len(hour_payload['y'])}")
-    print(f"  len(sum_y):        {len(hour_payload['sum_y'])}")
-    print(f"  len(sum_y2):       {len(hour_payload['sum_y2'])}")
+    print(f"  analysis_start_ts:     {payload['hour_start_ts']}")
+    print(f"  analysis_start_ts_ct:  {payload['hour_start_ts_ct']}")
+    print(f"  analysis_start_ct:     {payload['hour_start_ct']} CT")
+    print(f"  analysis_offset_sec:   {payload['hour_start_ts_ct'] % 3600}")
+    print(f"  hour_slot_ct:          {payload['hour_slot_ct']}")
+    print(f"  contract:              {payload['contract']}")
+    print(f"  len(y):                {len(payload['y'])}")
+    print(f"  len(sum_y):            {len(payload['sum_y'])}")
+    print(f"  len(sum_y2):           {len(payload['sum_y2'])}")
 
     print("  y[0:3]:")
-    for value in hour_payload["y"][0:3]:
+    for value in payload["y"][0:3]:
         print(f"    {value}")
 
     print("  y[-3:]:")
-    for value in hour_payload["y"][-3:]:
+    for value in payload["y"][-3:]:
         print(f"    {value}")
 
     print("  sum_y[0:3]:")
-    for value in hour_payload["sum_y"][0:3]:
+    for value in payload["sum_y"][0:3]:
         print(f"    {value}")
 
     print("  sum_y[-3:]:")
-    for value in hour_payload["sum_y"][-3:]:
+    for value in payload["sum_y"][-3:]:
         print(f"    {value}")
 
     print("  sum_y2[0:3]:")
-    for value in hour_payload["sum_y2"][0:3]:
+    for value in payload["sum_y2"][0:3]:
         print(f"    {value}")
 
     print("  sum_y2[-3:]:")
-    for value in hour_payload["sum_y2"][-3:]:
+    for value in payload["sum_y2"][-3:]:
         print(f"    {value}")
 
     print("")
+
+
+def print_prepared_db_offset_stats(table_name):
+    conn = sqlite3.connect(settings.prepared_db_path)
+
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT
+                hour_start_ts_ct % 3600 AS offset_seconds,
+                COUNT(DISTINCT hour_start_ts) AS windows_count,
+                COUNT(*) AS rows_count
+            FROM {table_name}
+            GROUP BY hour_start_ts_ct % 3600
+            ORDER BY offset_seconds
+            ;
+            """
+        ).fetchall()
+
+        print("Статистика prepared DB по offset старта окна анализа:")
+        if not rows:
+            print("  prepared DB пуста")
+            return
+
+        for offset_seconds, windows_count, rows_count in rows:
+            print(
+                f"  offset={offset_seconds:4d} sec ({offset_text(offset_seconds)}): "
+                f"windows={windows_count}, rows={rows_count}"
+            )
+    finally:
+        conn.close()
 
 
 # ============================================================
@@ -277,21 +316,32 @@ def ensure_prepared_database_initialized():
 
 
 def run_inspect_reader_mode():
-    instrument_row = get_instrument_row(INSTRUMENT_CODE)
     table_name = build_instrument_table_name(INSTRUMENT_CODE)
 
     ensure_prepared_database_initialized()
 
-    before_hour_start_ts_ct = parse_optional_ct_hour_start_text(BEFORE_HOUR_START_CT_TEXT)
-    allowed_hour_slots = resolve_allowed_hour_slots(HOUR_SLOT_CT)
+    before_analysis_window_start_ts_ct = parse_optional_ct_analysis_window_start_text(
+        BEFORE_ANALYSIS_WINDOW_START_CT_TEXT
+    )
 
-    print(f"Режим: inspect_reader")
+    if USE_ALLOWED_HOUR_SLOT_GROUP:
+        hour_slots_ct = resolve_allowed_hour_slots(HOUR_SLOT_CT)
+    else:
+        hour_slots_ct = [HOUR_SLOT_CT]
+
+    print("Режим: inspect_reader")
     print(f"Инструмент: {INSTRUMENT_CODE}")
     print(f"Таблица: {table_name}")
     print(f"prepared DB: {settings.prepared_db_path}")
-    print(f"Текущий hour_slot_ct: {HOUR_SLOT_CT}")
-    print(f"Разрешённые hour_slot_ct: {allowed_hour_slots}")
-    print(f"BEFORE_HOUR_START_CT_TEXT: {BEFORE_HOUR_START_CT_TEXT}")
+    print(f"Текущий HOUR_SLOT_CT: {HOUR_SLOT_CT}")
+    print(f"USE_ALLOWED_HOUR_SLOT_GROUP: {USE_ALLOWED_HOUR_SLOT_GROUP}")
+    print(f"Читаемые hour_slot_ct: {hour_slots_ct}")
+    print(
+        "ANALYSIS_WINDOW_START_OFFSET_SECONDS: "
+        f"{ANALYSIS_WINDOW_START_OFFSET_SECONDS} "
+        f"({offset_text(ANALYSIS_WINDOW_START_OFFSET_SECONDS)})"
+    )
+    print(f"BEFORE_ANALYSIS_WINDOW_START_CT_TEXT: {BEFORE_ANALYSIS_WINDOW_START_CT_TEXT}")
     print("")
 
     conn = sqlite3.connect(settings.prepared_db_path)
@@ -300,28 +350,28 @@ def run_inspect_reader_mode():
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=5000;")
 
-        hours = load_prepared_hours_by_slots(
+        windows = load_prepared_hours_by_slots(
             prepared_conn=conn,
             table_name=table_name,
-            hour_slots_ct=allowed_hour_slots,
-            before_hour_start_ts_ct=before_hour_start_ts_ct,
+            hour_slots_ct=hour_slots_ct,
+            before_hour_start_ts_ct=before_analysis_window_start_ts_ct,
+            analysis_window_start_offset_seconds=ANALYSIS_WINDOW_START_OFFSET_SECONDS,
         )
 
-        print(f"Найдено prepared-часов: {len(hours)}")
+        print(f"Найдено prepared analysis windows: {len(windows)}")
         print("")
 
-        if not hours:
-            print("По заданной группе hour_slot_ct ничего не найдено.")
+        if not windows:
+            print("По заданным фильтрам ничего не найдено.")
             return
 
-        first_hour = hours[0]
-        last_hour = hours[-1]
-
-        print_prepared_hour_summary("Первый prepared-час", first_hour)
-        print_prepared_hour_summary("Последний prepared-час", last_hour)
+        print_prepared_window_summary("Первое prepared analysis window", windows[0])
+        print_prepared_window_summary("Последнее prepared analysis window", windows[-1])
 
     finally:
         conn.close()
+
+    print_prepared_db_offset_stats(table_name)
 
 
 # ============================================================
@@ -330,55 +380,63 @@ def run_inspect_reader_mode():
 
 
 def run_sync_range_mode():
-    start_hour_ts = parse_optional_utc_hour_start_text(SYNC_START_HOUR_TEXT_UTC)
-    end_hour_ts = parse_optional_utc_hour_start_text(SYNC_END_HOUR_TEXT_UTC)
+    start_ts = parse_optional_utc_analysis_window_start_text(
+        SYNC_START_ANALYSIS_WINDOW_TEXT_UTC
+    )
+    end_ts = parse_optional_utc_analysis_window_start_text(
+        SYNC_END_ANALYSIS_WINDOW_TEXT_UTC
+    )
+
+    table_name = build_instrument_table_name(INSTRUMENT_CODE)
 
     ensure_prepared_database_initialized()
 
-    print(f"Режим: sync_range")
+    print("Режим: sync_range")
     print(f"Инструмент: {INSTRUMENT_CODE}")
+    print(f"Таблица: {table_name}")
     print(f"price DB: {settings.price_db_path}")
     print(f"prepared DB: {settings.prepared_db_path}")
-    print_range_line("SYNC_START_HOUR_TEXT_UTC", start_hour_ts)
-    print_range_line("SYNC_END_HOUR_TEXT_UTC", end_hour_ts)
+    print_range_line("SYNC_START_ANALYSIS_WINDOW_TEXT_UTC", start_ts)
+    print_range_line("SYNC_END_ANALYSIS_WINDOW_TEXT_UTC", end_ts)
     print("")
 
-    stats = sync_prepared_hours_for_range(
+    stats = sync_prepared_analysis_windows_for_range(
         settings=settings,
         instrument_code=INSTRUMENT_CODE,
-        start_hour_ts=start_hour_ts,
-        end_hour_ts=end_hour_ts,
+        start_analysis_window_ts=start_ts,
+        end_analysis_window_ts=end_ts,
         verbose=True,
     )
 
     print("")
     print("ИТОГ:")
-    print(f"  candidate-часов:          {stats.candidate_hours}")
-    print(f"  вставлено новых часов:    {stats.inserted_hours}")
-    print(f"  уже существовало часов:   {stats.skipped_existing_hours}")
-    print(f"  невалидных часов:         {stats.skipped_invalid_hours}")
+    print(f"  candidate windows:          {stats.candidate_windows}")
+    print(f"  вставлено новых windows:    {stats.inserted_windows}")
+    print(f"  уже существовало windows:   {stats.skipped_existing_windows}")
+    print(f"  невалидных windows:         {stats.skipped_invalid_windows}")
     print("")
 
+    print_prepared_db_offset_stats(table_name)
+
 
 # ============================================================
-# РЕЖИМ rebuild_one_hour
+# РЕЖИМ rebuild_one_window
 # ============================================================
 
 
-def run_rebuild_one_hour_mode():
-    instrument_row = get_instrument_row(INSTRUMENT_CODE)
+def run_rebuild_one_window_mode():
     table_name = build_instrument_table_name(INSTRUMENT_CODE)
 
     ensure_prepared_database_initialized()
 
-    hour_start_ts = parse_required_utc_hour_start_text(REBUILD_HOUR_START_TEXT_UTC)
-    hour_start_ct = format_ct_hour_start_ts_from_utc(hour_start_ts)
+    analysis_window_start_ts = parse_required_utc_analysis_window_start_text(
+        REBUILD_ANALYSIS_WINDOW_START_TEXT_UTC
+    )
 
-    print(f"Режим: rebuild_one_hour")
+    print("Режим: rebuild_one_window")
     print(f"Инструмент: {INSTRUMENT_CODE}")
     print(f"Таблица: {table_name}")
-    print(f"Час UTC: {REBUILD_HOUR_START_TEXT_UTC}")
-    print(f"Час CT:  {hour_start_ct}")
+    print_range_line("REBUILD_ANALYSIS_WINDOW_START_TEXT_UTC", analysis_window_start_ts)
     print(f"price DB: {settings.price_db_path}")
     print(f"prepared DB: {settings.prepared_db_path}")
     print("")
@@ -392,20 +450,26 @@ def run_rebuild_one_hour_mode():
         price_conn.execute("PRAGMA busy_timeout=5000;")
         prepared_conn.execute("PRAGMA busy_timeout=5000;")
 
-        prepared_rows = build_prepared_rows_for_one_hour(
+        prepared_rows = build_prepared_rows_for_analysis_window(
             price_conn=price_conn,
             table_name=table_name,
-            hour_start_ts=hour_start_ts,
+            analysis_window_start_ts=analysis_window_start_ts,
         )
 
-        replace_prepared_hour(
+        replace_prepared_analysis_window(
             prepared_conn=prepared_conn,
             table_name=table_name,
-            hour_start_ts=hour_start_ts,
+            analysis_window_start_ts=analysis_window_start_ts,
             prepared_rows=prepared_rows,
         )
 
         print(f"Записано строк в prepared DB: {len(prepared_rows)}")
+
+        if len(prepared_rows) != EXPECTED_PREPARED_ROWS:
+            raise ValueError(
+                f"Ожидалось {EXPECTED_PREPARED_ROWS} prepared rows, "
+                f"получено {len(prepared_rows)}"
+            )
 
         first_prepared_row = prepared_rows[0]
         last_prepared_row = prepared_rows[-1]
@@ -423,27 +487,30 @@ def run_rebuild_one_hour_mode():
 
         print("")
         print("Проверка результата:")
-        print(f"  hour_start_ts:    {first_prepared_row[0]}")
-        print(f"  hour_start_ts_ct: {first_prepared_row[1]}")
-        print(f"  hour_start_ct:    {first_prepared_row[2]}")
-        print(f"  hour_slot_ct:     {first_prepared_row[3]}")
-        print(f"  contract:         {first_prepared_row[4]}")
+        print(f"  analysis_start_ts:    {first_prepared_row[0]}")
+        print(f"  analysis_start_ts_ct: {first_prepared_row[1]}")
+        print(f"  analysis_start_ct:    {first_prepared_row[2]}")
+        print(f"  analysis_offset_sec:  {first_prepared_row[1] % 3600}")
+        print(f"  hour_slot_ct:         {first_prepared_row[3]}")
+        print(f"  contract:             {first_prepared_row[4]}")
         print("")
-        print(f"  Первый bar_index:    {first_prepared_row[5]}")
-        print(f"  Первый y:            {first_prepared_row[6]}")
-        print(f"  Первый sum_y:        {first_prepared_row[7]}")
-        print(f"  Первый sum_y2:       {first_prepared_row[8]}")
+        print(f"  Первый bar_index:     {first_prepared_row[5]}")
+        print(f"  Первый y:             {first_prepared_row[6]}")
+        print(f"  Первый sum_y:         {first_prepared_row[7]}")
+        print(f"  Первый sum_y2:        {first_prepared_row[8]}")
         print("")
-        print(f"  Последний bar_index: {last_prepared_row[5]}")
-        print(f"  Последний y:         {last_prepared_row[6]}")
-        print(f"  Последний sum_y:     {last_prepared_row[7]}")
-        print(f"  Последний sum_y2:    {last_prepared_row[8]}")
+        print(f"  Последний bar_index:  {last_prepared_row[5]}")
+        print(f"  Последний y:          {last_prepared_row[6]}")
+        print(f"  Последний sum_y:      {last_prepared_row[7]}")
+        print(f"  Последний sum_y2:     {last_prepared_row[8]}")
         print("")
         print("Готово.")
 
     finally:
         price_conn.close()
         prepared_conn.close()
+
+    print_prepared_db_offset_stats(table_name)
 
 
 # ============================================================
@@ -460,13 +527,13 @@ def main():
         run_sync_range_mode()
         return
 
-    if PREPARED_TOOL_MODE == "rebuild_one_hour":
-        run_rebuild_one_hour_mode()
+    if PREPARED_TOOL_MODE == "rebuild_one_window":
+        run_rebuild_one_window_mode()
         return
 
     raise ValueError(
         "Неподдерживаемый PREPARED_TOOL_MODE. "
-        "Ожидалось: inspect_reader, sync_range, rebuild_one_hour"
+        "Ожидалось: inspect_reader, sync_range, rebuild_one_window"
     )
 
 
