@@ -69,7 +69,11 @@ class DecisionOrderExecutor:
             entry_hour_start_ts,
     ):
         """Загружаем восстановленное состояние из recovery/reconcile слоя."""
-        normalized_slot_start_ts = self._get_slot_start_ts_from_ts(int(entry_hour_start_ts))
+        analysis_window_start_ts = int(entry_hour_start_ts or 0)
+        if analysis_window_start_ts <= 0:
+            normalized_slot_start_ts = analysis_window_start_ts
+        else:
+            normalized_slot_start_ts = analysis_window_start_ts + 1800
 
         self.state = DecisionOrderState(
             position_side=position_side,
@@ -455,13 +459,13 @@ class DecisionOrderExecutor:
             return
 
         current_trade_id = int(open_trade["trade_id"])
-        entry_slot_start_ts = self._get_slot_start_ts_from_ts(int(open_trade["signal_hour_start_ts"]))
+        analysis_window_start_ts = int(open_trade["signal_hour_start_ts"])
 
         self.hydrate_recovered_state(
             current_trade_id=current_trade_id,
             position_side=position_side,
             position_qty=position_qty,
-            entry_hour_start_ts=entry_slot_start_ts,
+            entry_hour_start_ts=analysis_window_start_ts,
         )
 
     def _is_empty_snapshot(self, snapshot) -> bool:
@@ -885,9 +889,9 @@ class DecisionOrderExecutor:
 
         plot_forecast_summary = self._build_plot_forecast_summary(snapshot)
 
-        signal_slot_start_ts = self._get_snapshot_slot_start_ts(snapshot)
-        signal_slot_start_ts_ct = self._get_snapshot_slot_start_ts_ct(snapshot)
-        signal_slot_start_ct = self._get_snapshot_slot_start_ct(snapshot)
+        analysis_window_start_ts = snapshot.hour_start_ts
+        analysis_window_start_ts_ct = snapshot.hour_start_ts_ct
+        analysis_window_start_ct = snapshot.hour_start_ct
         signal_bar_time_ts_ct = self._get_snapshot_bar_time_ts_ct(snapshot)
         signal_bar_time_ct = self._get_snapshot_bar_time_ct(snapshot)
 
@@ -898,9 +902,9 @@ class DecisionOrderExecutor:
             side=decision,
             quantity=self.quantity,
             status="NEW",
-            signal_hour_start_ts=signal_slot_start_ts,
-            signal_hour_start_ts_ct=signal_slot_start_ts_ct,
-            signal_hour_start_ct=signal_slot_start_ct,
+            signal_hour_start_ts=analysis_window_start_ts,
+            signal_hour_start_ts_ct=analysis_window_start_ts_ct,
+            signal_hour_start_ct=analysis_window_start_ct,
             signal_bar_index=snapshot.current_bar_index,
             signal_bar_time_ts=snapshot.last_bar_time_ts,
             signal_bar_time_ts_ct=signal_bar_time_ts_ct,
