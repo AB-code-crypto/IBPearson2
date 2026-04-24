@@ -32,10 +32,6 @@ class DecisionOrderState:
     # Начало 30-минутного торгового слота, в котором была открыта текущая позиция.
     entry_slot_start_ts: Optional[int] = None
 
-    # Начало 30-минутного торгового слота, в котором уже была попытка входа.
-    # Защищает от повторного открытия в том же слоте.
-    last_entry_attempt_slot_start_ts: Optional[int] = None
-
 
 class DecisionOrderExecutor:
     def __init__(
@@ -80,7 +76,6 @@ class DecisionOrderExecutor:
             position_qty=position_qty,
             current_trade_id=current_trade_id,
             entry_slot_start_ts=normalized_slot_start_ts,
-            last_entry_attempt_slot_start_ts=normalized_slot_start_ts,
         )
 
     def reset_in_memory_state(self):
@@ -279,7 +274,6 @@ class DecisionOrderExecutor:
 
         decision = snapshot.decision_result["decision"]
         slot_start_ts = self._get_snapshot_slot_start_ts(snapshot)
-        self.state.last_entry_attempt_slot_start_ts = slot_start_ts
 
         local_symbol = self._get_active_local_symbol(active_futures)
         order_ref = self._build_entry_order_ref(snapshot=snapshot, decision=decision)
@@ -399,9 +393,7 @@ class DecisionOrderExecutor:
                 )
 
             clear_trade_runtime_state(self.trade_db_path, self.instrument_code)
-            self.state = DecisionOrderState(
-                last_entry_attempt_slot_start_ts=self._get_snapshot_slot_start_ts(snapshot),
-            )
+            self.state = DecisionOrderState()
         except Exception as exc:
             self._handle_exit_error(
                 trade_id=trade_id,
@@ -439,9 +431,6 @@ class DecisionOrderExecutor:
 
         slot_start_ts = self._get_snapshot_slot_start_ts(snapshot)
         if slot_start_ts is None:
-            return False
-
-        if self.state.last_entry_attempt_slot_start_ts == slot_start_ts:
             return False
 
         return True
