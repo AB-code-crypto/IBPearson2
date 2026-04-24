@@ -11,13 +11,15 @@ from core.db_initializer import build_table_name
 from core.telegram_sender import TelegramSender
 
 CHICAGO_TZ = ZoneInfo("America/Chicago")
+HALF_HOUR_SECONDS = 1800
+ANALYSIS_WINDOW_SECONDS = 3600
 
 
 class TradeTelegramNotifier:
     # Отправляет торговые уведомления в Telegram:
-    # - подробный common-формат как и раньше
-    # - короткий trading-формат
-    # - promo-формат в тему группы
+    # - подробный common-формат;
+    # - короткий trading-формат;
+    # - promo-формат в тему группы.
 
     def __init__(self, settings, instrument_code="MNQ"):
         self.settings = settings
@@ -57,7 +59,6 @@ class TradeTelegramNotifier:
             quantity,
             placement,
     ):
-        # 1) Подробный common-канал: как и раньше.
         common_text = self._build_entry_text(
             snapshot=snapshot,
             trade_id=trade_id,
@@ -89,7 +90,6 @@ class TradeTelegramNotifier:
                     chat_id=self.chat_id_common,
                 )
 
-        # 2) Короткий trading-канал: только факт открытия сделки.
         if self.chat_id_trading:
             trading_text = self._build_trading_entry_text(
                 trade_id=trade_id,
@@ -102,7 +102,6 @@ class TradeTelegramNotifier:
                 chat_id=self.chat_id_trading,
             )
 
-        # 3) Promo-группа: упрощённая картинка + короткий текст в тему.
         if self.chat_id_promo:
             promo_text = self._build_promo_entry_text(
                 trade_id=trade_id,
@@ -147,7 +146,6 @@ class TradeTelegramNotifier:
     ):
         trade_row = self._load_trade_row(trade_id)
 
-        # 1) Подробный common-канал: текст + exit-картинка.
         common_text = self._build_exit_text(
             snapshot=snapshot,
             trade_id=trade_id,
@@ -179,7 +177,6 @@ class TradeTelegramNotifier:
                     chat_id=self.chat_id_common,
                 )
 
-        # 2) Короткий trading-канал.
         if self.chat_id_trading:
             trading_text = self._build_trading_exit_text(
                 trade_id=trade_id,
@@ -192,7 +189,6 @@ class TradeTelegramNotifier:
                 chat_id=self.chat_id_trading,
             )
 
-        # 3) Promo-группа в тему: тот же exit-график + короткий текст.
         if self.chat_id_promo:
             promo_text = self._build_promo_exit_text(
                 trade_id=trade_id,
@@ -250,7 +246,8 @@ class TradeTelegramNotifier:
             f"Сторона: {side}\n"
             f"Количество: {quantity}\n"
             f"Время UTC: {entry_time}\n"
-            f"Час CT: {snapshot.hour_start_ct}\n"
+            f"Окно анализа CT: {snapshot.hour_start_ct}\n"
+            f"Торговый слот CT: {self._get_snapshot_trade_slot_start_ct(snapshot)}\n"
             f"bar_index: {snapshot.current_bar_index}\n"
             f"Цена входа: {placement.avg_fill_price}\n"
             f"Комиссия входа: {placement.total_commission}\n"
@@ -272,6 +269,8 @@ class TradeTelegramNotifier:
             f"Инструмент: {self.instrument_code}\n"
             f"Сторона: {entry_side}\n"
             f"Количество: {quantity}\n"
+            f"Окно анализа CT: {snapshot.hour_start_ct}\n"
+            f"Торговый слот CT: {self._get_snapshot_trade_slot_start_ct(snapshot)}\n"
             f"Цена выхода: {placement.avg_fill_price}\n"
             f"Комиссия выхода: {placement.total_commission}\n"
             f"Realized PnL: {placement.realized_pnl}"
@@ -338,23 +337,21 @@ class TradeTelegramNotifier:
         forecast_summary = snapshot.forecast_summary or {}
         future_items = forecast_summary.get("future_items") or []
 
-        # fallback: если forecast_summary почему-то пустой, рисуем всё, что есть в snapshot
         if not future_items:
             return ranked_similarity_candidates
 
-        forecast_hour_start_ts = {
+        forecast_analysis_window_start_ts = {
             item["hour_start_ts"]
             for item in future_items
             if item.get("hour_start_ts") is not None
         }
-        if not forecast_hour_start_ts:
+        if not forecast_analysis_window_start_ts:
             return ranked_similarity_candidates
 
-        # Сохраняем порядок similarity-ranking, а фильтруем по реальному составу forecast.
         return [
             item
             for item in ranked_similarity_candidates
-            if item["hour_start_ts"] in forecast_hour_start_ts
+            if item["hour_start_ts"] in forecast_analysis_window_start_ts
         ]
 
     def _build_entry_plot(self, *, snapshot, pearson_live_runtime, trade_id):
@@ -385,15 +382,15 @@ class TradeTelegramNotifier:
             current_x,
             current_values,
             linewidth=2.5,
-            label=f"Текущий час | CT {snapshot.hour_start_ct}",
+            label=f"Текущее окно анализа | CT {snapshot.hour_start_ct}",
         )
 
         for rank, item in enumerate(ranked_similarity_candidates, start=1):
-            hour_start_ts = item["hour_start_ts"]
-            if hour_start_ts not in prepared_hours_map:
+            analysis_window_start_ts = item["hour_start_ts"]
+            if analysis_window_start_ts not in prepared_hours_map:
                 continue
 
-            candidate_y = prepared_hours_map[hour_start_ts]["y"]
+            candidate_y = prepared_hours_map[analysis_window_start_ts]["y"]
             candidate_x = list(range(len(candidate_y)))
 
             plt.plot(
@@ -409,43 +406,16 @@ class TradeTelegramNotifier:
             )
 
         if snapshot.forecast_summary is not None:
-            mean_future_path = snapshot.forecast_summary.get("mean_future_path") or []
-            median_future_path = snapshot.forecast_summary.get("median_future_path") or []
+            self._plot_forecast_paths(
+                current_values=current_values,
+                entry_x=entry_x,
+                forecast_summary=snapshot.forecast_summary,
+                mean_label="Средний future-path",
+                median_label="Медианный future-path",
+            )
 
-            entry_y = current_values[entry_x]
-
-            if mean_future_path:
-                start_x = entry_x + 1
-                future_x = list(range(start_x, start_x + len(mean_future_path)))
-                future_y = self._project_future_path(entry_y=entry_y, rel_path=mean_future_path)
-
-                plt.plot(
-                    future_x,
-                    future_y,
-                    linewidth=2.0,
-                    linestyle="--",
-                    label="Средний future-path",
-                )
-
-            if median_future_path:
-                start_x = entry_x + 1
-                future_x = list(range(start_x, start_x + len(median_future_path)))
-                future_y = self._project_future_path(entry_y=entry_y, rel_path=median_future_path)
-
-                plt.plot(
-                    future_x,
-                    future_y,
-                    linewidth=2.0,
-                    linestyle=":",
-                    label="Медианный future-path",
-                )
-
-        plt.axvline(
-            x=entry_x,
-            linestyle="--",
-            linewidth=1.5,
-            label=f"Точка входа: bar_index={entry_x}",
-        )
+        self._plot_trade_slot_lines(snapshot=snapshot)
+        self._plot_entry_line(entry_x=entry_x)
 
         title_reason = "-"
         if snapshot.decision_result is not None:
@@ -454,13 +424,13 @@ class TradeTelegramNotifier:
         plotted_count = len(ranked_similarity_candidates)
 
         plt.title(
-            f"Trade Entry | {title_reason} | CT {snapshot.hour_start_ct} | "
+            f"Trade Entry | {title_reason} | "
+            f"analysis CT {snapshot.hour_start_ct} | "
+            f"trade slot CT {self._get_snapshot_trade_slot_start_ct(snapshot)} | "
             f"trade_id={trade_id} | forecast_n={plotted_count}"
         )
-        plt.xlabel("bar_index")
+        plt.xlabel("bar_index внутри 60-минутного окна анализа")
         plt.ylabel("y")
-
-        # Когда линий много, легенду лучше вынести наружу.
         plt.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=8)
         plt.grid(True)
         plt.tight_layout(rect=[0, 0, 0.80, 1])
@@ -495,51 +465,32 @@ class TradeTelegramNotifier:
             current_x,
             current_values,
             linewidth=2.5,
-            label=f"Текущий час | CT {snapshot.hour_start_ct}",
+            label=f"Окно анализа | CT {snapshot.hour_start_ct}",
         )
 
         entry_y = current_values[entry_x]
         plt.scatter([entry_x], [entry_y], s=60, label="Точка входа")
-        plt.axvline(
-            x=entry_x,
-            linestyle="--",
-            linewidth=1.5,
-            label="Вход",
-        )
+        self._plot_trade_slot_lines(snapshot=snapshot)
+        self._plot_entry_line(entry_x=entry_x, label="Вход")
 
         if snapshot.forecast_summary is not None:
-            mean_future_path = snapshot.forecast_summary.get("mean_future_path") or []
-            median_future_path = snapshot.forecast_summary.get("median_future_path") or []
-
-            if mean_future_path:
-                start_x = entry_x + 1
-                future_x = list(range(start_x, start_x + len(mean_future_path)))
-                future_y = self._project_future_path(entry_y=entry_y, rel_path=mean_future_path)
-                plt.plot(
-                    future_x,
-                    future_y,
-                    linewidth=2.0,
-                    linestyle="--",
-                    label="Прогноз 1",
-                )
-
-            if median_future_path:
-                start_x = entry_x + 1
-                future_x = list(range(start_x, start_x + len(median_future_path)))
-                future_y = self._project_future_path(entry_y=entry_y, rel_path=median_future_path)
-                plt.plot(
-                    future_x,
-                    future_y,
-                    linewidth=2.0,
-                    linestyle=":",
-                    label="Прогноз 2",
-                )
+            self._plot_forecast_paths(
+                current_values=current_values,
+                entry_x=entry_x,
+                forecast_summary=snapshot.forecast_summary,
+                mean_label="Прогноз 1",
+                median_label="Прогноз 2",
+            )
 
         decision = "-"
         if snapshot.decision_result is not None:
             decision = snapshot.decision_result.get("decision", "-")
 
-        plt.title(f"Сделка | {decision} | CT {snapshot.hour_start_ct} | №{trade_id}")
+        plt.title(
+            f"Сделка | {decision} | "
+            f"analysis CT {snapshot.hour_start_ct} | "
+            f"slot CT {self._get_snapshot_trade_slot_start_ct(snapshot)} | №{trade_id}"
+        )
         plt.ylabel("y")
         plt.legend(loc="best", fontsize=9)
         plt.grid(True)
@@ -553,7 +504,7 @@ class TradeTelegramNotifier:
         if trade_row is None:
             return None
 
-        signal_hour_start_ts = self._safe_trade_value(
+        signal_analysis_window_start_ts = self._safe_trade_value(
             trade_row,
             "signal_hour_start_ts",
             fallback=None,
@@ -563,43 +514,43 @@ class TradeTelegramNotifier:
             "signal_bar_index",
             fallback=None,
         )
-        signal_hour_start_ct = self._safe_trade_value(
+        signal_analysis_window_start_ct = self._safe_trade_value(
             trade_row,
             "signal_hour_start_ct",
             fallback="-",
         )
         forecast_summary = self._load_trade_json(trade_row, "forecast_summary_json") or {}
 
-        if signal_hour_start_ts is None or signal_bar_index is None:
+        if signal_analysis_window_start_ts is None or signal_bar_index is None:
             return None
 
-        signal_hour_start_ts = int(signal_hour_start_ts)
+        signal_analysis_window_start_ts = int(signal_analysis_window_start_ts)
         signal_bar_index = int(signal_bar_index)
 
-        exit_in_signal_hour = snapshot.hour_start_ts == signal_hour_start_ts
+        exit_in_signal_analysis_window = snapshot.hour_start_ts == signal_analysis_window_start_ts
         max_bar_index = None
-        fact_label = "Факт часа"
+        fact_label = "Факт окна анализа"
         exit_bar_index = None
 
-        if exit_in_signal_hour:
+        if exit_in_signal_analysis_window:
             if snapshot.current_bar_index is None:
                 return None
             exit_bar_index = int(snapshot.current_bar_index)
             max_bar_index = exit_bar_index
             fact_label = "Факт до выхода"
 
-        hour_rows = self._load_signal_hour_price_rows(
-            signal_hour_start_ts=signal_hour_start_ts,
+        window_rows = self._load_signal_analysis_window_price_rows(
+            signal_analysis_window_start_ts=signal_analysis_window_start_ts,
             max_bar_index=max_bar_index,
         )
-        current_values = self._build_normalized_hour_values(hour_rows)
+        current_values = self._build_normalized_analysis_window_values(window_rows)
 
         if not current_values:
             return None
         if signal_bar_index >= len(current_values):
             return None
 
-        output_path = self.output_dir / f"trade_exit_{trade_id}_{signal_hour_start_ts}.png"
+        output_path = self.output_dir / f"trade_exit_{trade_id}_{signal_analysis_window_start_ts}.png"
 
         plt.figure(figsize=(12, 7))
         current_x = list(range(len(current_values)))
@@ -608,20 +559,15 @@ class TradeTelegramNotifier:
             current_x,
             current_values,
             linewidth=2.5,
-            label=f"{fact_label} | CT {signal_hour_start_ct}",
+            label=f"{fact_label} | CT {signal_analysis_window_start_ct}",
         )
 
         entry_x = signal_bar_index
         entry_y = current_values[entry_x]
         plt.scatter([entry_x], [entry_y], s=60, label="Точка входа")
-        plt.axvline(
-            x=entry_x,
-            linestyle="--",
-            linewidth=1.5,
-            label="Вход",
-        )
+        self._plot_trade_slot_lines_for_analysis_window()
+        self._plot_entry_line(entry_x=entry_x, label="Вход")
 
-        # Точку выхода рисуем только если она лежит внутри того же сигнального часа.
         if exit_bar_index is not None and exit_bar_index < len(current_values):
             exit_y = current_values[exit_bar_index]
             plt.scatter([exit_bar_index], [exit_y], s=60, label="Точка выхода")
@@ -632,38 +578,21 @@ class TradeTelegramNotifier:
                 label="Выход",
             )
 
-        mean_future_path = forecast_summary.get("mean_future_path") or []
-        median_future_path = forecast_summary.get("median_future_path") or []
-
-        if mean_future_path:
-            start_x = entry_x + 1
-            future_x = list(range(start_x, start_x + len(mean_future_path)))
-            future_y = self._project_future_path(entry_y=entry_y, rel_path=mean_future_path)
-            plt.plot(
-                future_x,
-                future_y,
-                linewidth=2.0,
-                linestyle="--",
-                label="Прогноз 1",
+        if forecast_summary:
+            self._plot_forecast_paths(
+                current_values=current_values,
+                entry_x=entry_x,
+                forecast_summary=forecast_summary,
+                mean_label="Прогноз 1",
+                median_label="Прогноз 2",
             )
 
-        if median_future_path:
-            start_x = entry_x + 1
-            future_x = list(range(start_x, start_x + len(median_future_path)))
-            future_y = self._project_future_path(entry_y=entry_y, rel_path=median_future_path)
-            plt.plot(
-                future_x,
-                future_y,
-                linewidth=2.0,
-                linestyle=":",
-                label="Прогноз 2",
-            )
-
-        full_hour_text = "yes" if not exit_in_signal_hour else "no"
+        full_window_text = "yes" if not exit_in_signal_analysis_window else "no"
         plt.title(
-            f"Trade Exit | CT {signal_hour_start_ct} | trade_id={trade_id} | full_hour={full_hour_text}"
+            f"Trade Exit | analysis CT {signal_analysis_window_start_ct} | "
+            f"trade_id={trade_id} | full_window={full_window_text}"
         )
-        plt.xlabel("bar_index")
+        plt.xlabel("bar_index внутри 60-минутного окна анализа")
         plt.ylabel("y")
         plt.legend(loc="best", fontsize=9)
         plt.grid(True)
@@ -673,13 +602,13 @@ class TradeTelegramNotifier:
 
         return output_path
 
-    def _load_signal_hour_price_rows(self, *, signal_hour_start_ts, max_bar_index=None):
-        upper_ts_exclusive = signal_hour_start_ts + 3600
+    def _load_signal_analysis_window_price_rows(self, *, signal_analysis_window_start_ts, max_bar_index=None):
+        upper_ts_exclusive = signal_analysis_window_start_ts + ANALYSIS_WINDOW_SECONDS
 
         if max_bar_index is not None:
             upper_ts_exclusive = min(
                 upper_ts_exclusive,
-                signal_hour_start_ts + ((int(max_bar_index) + 1) * self.bar_interval_seconds),
+                signal_analysis_window_start_ts + ((int(max_bar_index) + 1) * self.bar_interval_seconds),
             )
 
         conn = sqlite3.connect(self.price_db_path)
@@ -702,19 +631,19 @@ class TradeTelegramNotifier:
                   AND bid_close IS NOT NULL
                 ORDER BY bar_time_ts
             """
-            return conn.execute(sql, (signal_hour_start_ts, upper_ts_exclusive)).fetchall()
+            return conn.execute(sql, (signal_analysis_window_start_ts, upper_ts_exclusive)).fetchall()
         finally:
             conn.close()
 
     @staticmethod
-    def _build_normalized_hour_values(hour_rows):
-        if not hour_rows:
+    def _build_normalized_analysis_window_values(window_rows):
+        if not window_rows:
             return []
 
         mid_open_0 = None
         values = []
 
-        for row in hour_rows:
+        for row in window_rows:
             ask_open = row["ask_open"]
             bid_open = row["bid_open"]
             ask_close = row["ask_close"]
@@ -733,6 +662,67 @@ class TradeTelegramNotifier:
     @staticmethod
     def _project_future_path(*, entry_y, rel_path):
         return [((1.0 + entry_y) * (1.0 + rel_move)) - 1.0 for rel_move in rel_path]
+
+    def _plot_forecast_paths(self, *, current_values, entry_x, forecast_summary, mean_label, median_label):
+        if entry_x is None or entry_x >= len(current_values):
+            return
+
+        entry_y = current_values[entry_x]
+        mean_future_path = forecast_summary.get("mean_future_path") or []
+        median_future_path = forecast_summary.get("median_future_path") or []
+
+        if mean_future_path:
+            start_x = entry_x + 1
+            future_x = list(range(start_x, start_x + len(mean_future_path)))
+            future_y = self._project_future_path(entry_y=entry_y, rel_path=mean_future_path)
+            plt.plot(
+                future_x,
+                future_y,
+                linewidth=2.0,
+                linestyle="--",
+                label=mean_label,
+            )
+
+        if median_future_path:
+            start_x = entry_x + 1
+            future_x = list(range(start_x, start_x + len(median_future_path)))
+            future_y = self._project_future_path(entry_y=entry_y, rel_path=median_future_path)
+            plt.plot(
+                future_x,
+                future_y,
+                linewidth=2.0,
+                linestyle=":",
+                label=median_label,
+            )
+
+    @staticmethod
+    def _plot_entry_line(*, entry_x, label="Точка входа"):
+        plt.axvline(
+            x=entry_x,
+            linestyle="--",
+            linewidth=1.5,
+            label=f"{label}: bar_index={entry_x}",
+        )
+
+    @staticmethod
+    def _plot_trade_slot_lines_for_analysis_window():
+        plt.axvline(
+            x=360,
+            linestyle="-.",
+            linewidth=1.2,
+            label="Начало торгового слота",
+        )
+        plt.axvline(
+            x=600,
+            linestyle="-.",
+            linewidth=1.2,
+            label="Конец окна входа",
+        )
+
+    def _plot_trade_slot_lines(self, *, snapshot):
+        if snapshot.current_bar_index is None:
+            return
+        self._plot_trade_slot_lines_for_analysis_window()
 
     @staticmethod
     def _build_forecast_direction(forecast_summary):
@@ -762,6 +752,22 @@ class TradeTelegramNotifier:
             else int(placement.receipt.placed_at_utc.timestamp())
         )
         return self._format_ct_ts(ts)
+
+    @staticmethod
+    def _floor_to_half_hour_ts(ts: int) -> int:
+        return (int(ts) // HALF_HOUR_SECONDS) * HALF_HOUR_SECONDS
+
+    def _get_snapshot_trade_slot_start_ts(self, snapshot):
+        bar_time_ts = getattr(snapshot, "last_bar_time_ts", None)
+        if bar_time_ts is None:
+            return None
+        return self._floor_to_half_hour_ts(int(bar_time_ts))
+
+    def _get_snapshot_trade_slot_start_ct(self, snapshot):
+        trade_slot_start_ts = self._get_snapshot_trade_slot_start_ts(snapshot)
+        if trade_slot_start_ts is None:
+            return None
+        return self._format_ct_ts(trade_slot_start_ts)
 
     def _load_trade_row(self, trade_id):
         conn = sqlite3.connect(self.trade_db_path)
