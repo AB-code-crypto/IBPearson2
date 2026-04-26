@@ -88,11 +88,16 @@ def evaluate_decision_layer(
     #   "reason": "...",
     #   "diagnostics": {...}
     # }
+    decision_similarity_candidates = ranked_similarity_candidates[
+        : params.forecast_top_n_after_similarity
+    ]
+
     diagnostics = build_decision_diagnostics(
-        ranked_similarity_candidates=ranked_similarity_candidates,
+        ranked_similarity_candidates=decision_similarity_candidates,
         forecast_summary=forecast_summary,
     )
     diagnostics["current_reference_price"] = current_reference_price
+    diagnostics["similarity_candidate_count_total"] = len(ranked_similarity_candidates)
 
     if forecast_summary is None:
         return build_no_trade_result(
