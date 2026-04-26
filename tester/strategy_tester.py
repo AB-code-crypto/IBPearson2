@@ -1140,29 +1140,33 @@ def run_parameter_sweep(
 if __name__ == "__main__":
     instrument_code = "MNQ"
 
-    start_utc = "2026-01-01 00:00:00"
-    end_utc = "2026-04-11 00:00:00"
+    # start_utc = "2026-01-01 00:00:00"
+    # end_utc = "2026-04-11 00:00:00"
+
+    start_utc = "2026-04-20 00:00:00"
+    end_utc = "2026-04-25 00:00:00"
 
     # Для проверки эквивалентности старой логике оставь SECOND_HALF_ONLY.
     # Для новой торговли каждые полчаса поставь TradingHalfHourMode.ANY_HALF.
     param_specs = {
-        "trading_half_hour_mode": [TradingHalfHourMode.ANY_HALF],
+        # "trading_half_hour_mode": [TradingHalfHourMode.SECOND_HALF_ONLY],
+        # "trading_half_hour_mode": [TradingHalfHourMode.SECOND_HALF_ONLY, TradingHalfHourMode.FIRST_HALF_ONLY, TradingHalfHourMode.ANY_HALF],
 
-        "pearson_shortlist_min_correlation": [0.70],
+        "pearson_shortlist_min_correlation": [0.7],
         "pearson_shortlist_top_n": [30],
         "pearson_min_shortlist": [15],
         "forecast_top_n_after_similarity": [5],
-        "decision_min_last_similarity_score": [0.30],
-        "decision_min_final_move_points": [10.0],
+        "decision_min_last_similarity_score": [0.7],
+        "decision_min_final_move_points": [10],
 
-        "similarity_weight_pearson": [4.0],
-        "similarity_weight_range": [1.0],
-        "similarity_weight_net_move": [2.0],
-        "similarity_weight_mean_abs_diff": [2.0],
-        "similarity_weight_efficiency": [2.0],
-        "similarity_weight_range_position": [2.0],
-        "similarity_weight_diff_pearson": [0.0],
-        "similarity_weight_diff_sign_match": [2.0],
+        "similarity_weight_pearson": [4],
+        "similarity_weight_range": [1],
+        "similarity_weight_net_move": [2],
+        "similarity_weight_mean_abs_diff": [2],
+        "similarity_weight_efficiency": [2],
+        "similarity_weight_range_position": [2],
+        "similarity_weight_diff_pearson": [0],
+        "similarity_weight_diff_sign_match": [0],
     }
 
     multiplier = float(Instrument[instrument_code]["multiplier"])
@@ -1178,7 +1182,7 @@ if __name__ == "__main__":
         prepared_db_path=settings_live.prepared_db_path,
         multiplier=multiplier,
         max_workers=max(1, min((os.cpu_count() or 1), 18)),
-        chunk_size=4,
+        chunk_size=1,
         output_dir=output_dir,
         resume_from_existing=False,
         exit_bar_index=settings_live.trading_exit_bar_index,
