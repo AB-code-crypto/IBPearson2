@@ -1140,11 +1140,11 @@ def run_parameter_sweep(
 if __name__ == "__main__":
     instrument_code = "MNQ"
 
-    # start_utc = "2026-01-01 00:00:00"
-    # end_utc = "2026-04-11 00:00:00"
+    start_utc = "2026-01-01 00:00:00"
+    end_utc = "2026-04-11 00:00:00"
 
-    start_utc = "2026-04-20 00:00:00"
-    end_utc = "2026-04-25 00:00:00"
+    # start_utc = "2026-04-20 00:00:00"
+    # end_utc = "2026-04-25 00:00:00"
 
     # Для проверки эквивалентности старой логике оставь SECOND_HALF_ONLY.
     # Для новой торговли каждые полчаса поставь TradingHalfHourMode.ANY_HALF.
@@ -1158,7 +1158,8 @@ if __name__ == "__main__":
         "pearson_shortlist_top_n": [30],
         "pearson_min_shortlist": [15],
         "forecast_top_n_after_similarity": [5],
-        "decision_min_last_similarity_score": [0.3],
+        # "decision_min_last_similarity_score": [0.3],
+        "decision_min_last_similarity_score": [0.7, 0.75, 0.8],
         "decision_min_final_move_points": [10],
 
         "similarity_weight_pearson": [4],
@@ -1167,8 +1168,8 @@ if __name__ == "__main__":
         "similarity_weight_mean_abs_diff": [2],
         "similarity_weight_efficiency": [2],
         "similarity_weight_range_position": [2],
-        "similarity_weight_diff_pearson": [0],
-        "similarity_weight_diff_sign_match": [0],
+        "similarity_weight_diff_pearson": [0,2],
+        "similarity_weight_diff_sign_match": [0,2],
     }
 
     multiplier = float(Instrument[instrument_code]["multiplier"])
@@ -1183,7 +1184,7 @@ if __name__ == "__main__":
         price_db_path=settings_live.price_db_path,
         prepared_db_path=settings_live.prepared_db_path,
         multiplier=multiplier,
-        max_workers=max(1, min((os.cpu_count() or 1), 18)),
+        max_workers=max(1, min((os.cpu_count() or 1), 16)),
         chunk_size=1,
         output_dir=output_dir,
         resume_from_existing=False,
