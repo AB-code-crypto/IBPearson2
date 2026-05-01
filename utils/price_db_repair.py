@@ -105,8 +105,10 @@ INSTRUMENT_CODE = "MNQ"
 
 # Для MANUAL_INTERVAL указываем точный контракт и интервал.
 CONTRACT_LOCAL_SYMBOL = "MNQM6"
-MANUAL_START_UTC = "2026-04-13 18:15:00"
-MANUAL_END_UTC = "2026-04-13 19:00:00"
+MANUAL_START_UTC = None
+MANUAL_END_UTC = None
+# MANUAL_START_UTC = "2026-04-13 18:15:00"
+# MANUAL_END_UTC = "2026-04-13 19:00:00"
 
 # Для AUTO_REPAIR можно ограничить диапазон поиска.
 # Если None - ищем по всей таблице.
